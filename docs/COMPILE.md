@@ -23,24 +23,23 @@ AVX2 je zapnuté automaticky (`/arch:AVX2`).
 ## Adresářová struktura
 
 ```
-resonators/                         ← kořen repozitáře
-├── IthacaCoreResonator/            ← C++ projekt
-│   ├── CMakeLists.txt
-│   ├── main.cpp                    ← CLI vstupní bod
-│   ├── gui_main.cpp                ← GUI vstupní bod
-│   ├── synth/                      ← syntézní jádro
-│   ├── dsp/                        ← BBE + limiter
-│   ├── gui/                        ← Dear ImGui frontend
-│   ├── sampler/                    ← logger (z IthacaCore)
-│   ├── third_party/                ← vendorované deps (součást repozitáře)
-│   │   ├── json.hpp                ← nlohmann/json (MIT)
-│   │   ├── miniaudio.h             ← audio I/O (MIT)
-│   │   ├── RtMidi.h / RtMidi.cpp  ← MIDI I/O (MIT)
-│   ├── soundbanks/                 ← parametrické banky (*.json, nejsou v gitu)
-│   │   ├── salamander.json         ← Salamander Grand Piano (zkopírovat ručně)
-│   │   └── .gitignore
-│   ├── build/                      ← CMake build adresář (není v gitu)
-│   └── docs/                       ← dokumentace
+IthacaCoreResonator/        ← kořen repozitáře (working directory pro spuštění)
+├── CMakeLists.txt
+├── main.cpp                ← CLI vstupní bod
+├── gui_main.cpp            ← GUI vstupní bod
+├── synth/                  ← syntézní jádro
+├── dsp/                    ← BBE + limiter
+├── gui/                    ← Dear ImGui frontend
+├── sampler/                ← logger
+├── third_party/            ← vendorované deps (součást repozitáře)
+│   ├── json.hpp            ← nlohmann/json (MIT)
+│   ├── miniaudio.h         ← audio I/O (MIT)
+│   └── RtMidi.h/.cpp       ← MIDI I/O (MIT)
+├── soundbanks/             ← parametrické banky (*.json nejsou v gitu)
+│   ├── salamander.json     ← zkopírovat ručně (viz níže)
+│   └── .gitignore
+├── build/                  ← CMake build adresář (není v gitu)
+└── docs/                   ← dokumentace
 ```
 
 GLFW a Dear ImGui se stáhnou automaticky při prvním CMake configure přes FetchContent.
@@ -49,13 +48,11 @@ GLFW a Dear ImGui se stáhnou automaticky při prvním CMake configure přes Fet
 
 ## Build — Windows (MSVC, doporučený postup)
 
-Všechny příkazy se spouštějí z adresáře `IthacaCoreResonator/`.
+Všechny příkazy se spouštějí z kořenového adresáře projektu (`IthacaCoreResonator/`).
 
 ### 1. Configure
 
 ```bat
-cd IthacaCoreResonator
-
 cmake -B build -G "Visual Studio 17 2022" -A x64
 ```
 
@@ -96,7 +93,6 @@ Pokud `cmake` není v PATH nebo je třeba ručně nastavit toolchain:
 :: Otevři "Developer Command Prompt for VS 2022" (x64)
 "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 
-cd IthacaCoreResonator
 cmake -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 ```
@@ -126,7 +122,7 @@ Binárky se spouštějí z `IthacaCoreResonator/` jako working directory.
 Výchozí cesta k bance je relativní:
 
 ```
-IthacaCoreResonator/soundbanks/salamander.json
+soundbanks/salamander.json
 ```
 
 Soubor `soundbanks/*.json` **není v gitu** (15 MB, viz `soundbanks/.gitignore`).
