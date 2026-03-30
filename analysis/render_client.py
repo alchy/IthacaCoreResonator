@@ -14,9 +14,9 @@ Usage
 -----
     from analysis.render_client import RenderClient
 
-    # Auto-start server subprocess + connect:
-    with RenderClient("build/bin/IthacaRenderServer",
-                      "analysis/params-ks-grand.json") as rc:
+    # Auto-start server subprocess + connect (Windows MSVC Release build):
+    with RenderClient("build/bin/Release/IthacaRenderServer.exe",
+                      "analysis/params-nn-profile-ks-grand.json") as rc:
         rc.set_config(beat_scale=1.5, eq_strength=0.8)
         # vel = velocity band 0-7 (matching training data convention)
         frames = rc.render(midi=60, vel=3, duration=3.0,
@@ -56,8 +56,8 @@ class RenderClient:
     CONNECT_DELAY   = 0.1    # seconds between connection attempts
 
     def __init__(self,
-                 server_exe: Optional[str] = "build/bin/IthacaRenderServer.exe",
-                 params_json: str          = "analysis/params-ks-grand.json",
+                 server_exe: Optional[str] = "build/bin/Release/IthacaRenderServer.exe",
+                 params_json: str          = "analysis/params-nn-profile-ks-grand.json",
                  host: str                 = "127.0.0.1",
                  port: int                 = DEFAULT_PORT,
                  timeout: float            = 30.0,
