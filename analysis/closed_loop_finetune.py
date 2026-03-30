@@ -84,6 +84,13 @@ import soundfile as sf
 import torch
 import torch.nn as nn
 
+# Windows: force UTF-8 output
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+# Default notes rendered as WAV checkpoints: A0, C3, C4, C5, C7 across vel layers
+_DEFAULT_SAMPLE_NOTES = "21:3,48:3,60:3,72:5,96:5"
+
 # ── Project imports ───────────────────────────────────────────────────────────
 
 _ROOT = str(Path(__file__).parent.parent)
@@ -214,6 +221,55 @@ def load_wav_mono(
 
 # ── Evaluation ────────────────────────────────────────────────────────────────
 
+def render_checkpoint_samples(
+    model:      InstrumentProfile,
+    epoch:      int,
+    args:       argparse.Namespace,
+    log:        _Logger,
+) -> None:
+    """
+    Render a small set of notes via proxy synth and save as WAV files.
+
+    Output: <args.render_dir>/epoch-<N>/m<midi>_vel<vel>.wav
+    Use these WAV files to audition how synthesis quality evolves during training.
+
+    Note: proxy synth output is mono and simplified (no EQ, no stereo decorr).
+    For high-quality stereo samples use IthacaRenderServer after training.
+    """
+    if not args.render_dir:
+        return
+
+    out_dir = Path(args.render_dir) / f"epoch-{epoch:04d}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Parse --sample-notes "midi:vel,midi:vel,..."
+    notes: list[tuple[int, int]] = []
+    for token in args.sample_notes.split(','):
+        token = token.strip()
+        if ':' in token:
+            m, v = token.split(':', 1)
+            notes.append((int(m), int(v)))
+
+    model.eval()
+    with torch.no_grad():
+        for midi, vel in notes:
+            try:
+                pred = render_note_differentiable(
+                    model, midi, vel,
+                    sr=args.sr,
+                    duration=args.duration,
+                    noise_level=args.noise_level,
+                    target_rms=args.target_rms,
+                    vel_gamma=args.vel_gamma,
+                    k_max=args.k_max,
+                )
+                wav_path = out_dir / f"m{midi:03d}_vel{vel}.wav"
+                sf.write(str(wav_path), pred.numpy(), args.sr, subtype='FLOAT')
+                log.log(f"  sample -> {wav_path.name}")
+            except Exception as e:
+                log.log(f"  WARN sample m{midi:03d}v{vel}: {e}")
+
+
 def evaluate(
     model:    InstrumentProfile,
     ref_notes: list[tuple[int, int, torch.Tensor]],
@@ -292,6 +348,8 @@ def finetune(
     # Initial evaluation
     log.log(f"\n[epoch 0 / {args.epochs}] initial evaluation:")
     mean0 = evaluate(model, ref_notes, args, log)
+    if args.render_dir:
+        render_checkpoint_samples(model, 0, args, log)
 
     best_loss = mean0
     best_state = {k: v.clone() for k, v in model.state_dict().items()}
@@ -355,10 +413,12 @@ def finetune(
                     f"loss={avg_loss:.4f}  lr={scheduler.get_last_lr()[0]:.2e}  "
                     f"t={epoch_time:.1f}s")
 
-        # Periodic full evaluation
+        # Periodic full evaluation + optional WAV checkpoint
         if epoch % args.eval_every == 0 or epoch == args.epochs:
             log.log(f"\n[epoch {epoch} eval]")
             mean = evaluate(model, ref_notes, args, log)
+            if args.render_dir:
+                render_checkpoint_samples(model, epoch, args, log)
             if mean < best_loss:
                 best_loss  = mean
                 best_state = {k: v.clone() for k, v in model.state_dict().items()}
@@ -393,6 +453,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--batch-size',  type=int,   default=8)
     p.add_argument('--eval-every',  type=int,   default=20,
                    help='run full eval every N epochs (default: 20)')
+    # WAV sample checkpoints
+    p.add_argument('--render-dir',   default=None,
+                   help='save proxy WAV samples at each eval checkpoint (e.g. exports/finetune-samples)')
+    p.add_argument('--sample-notes', default=_DEFAULT_SAMPLE_NOTES,
+                   help='notes to render as WAV checkpoints, "midi:vel,..." '
+                        f'(default: {_DEFAULT_SAMPLE_NOTES})')
     # Render / SynthConfig
     p.add_argument('--duration',    type=float, default=3.0,
                    help='proxy render + reference crop in seconds (default: 3.0)')
