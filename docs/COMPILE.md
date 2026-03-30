@@ -74,6 +74,12 @@ Výstupní binárky:
 |--------|-------|
 | GUI (primární) | `build/bin/Release/IthacaCoreResonatorGUI.exe` |
 | CLI (headless) | `build/bin/Release/IthacaCoreResonator.exe` |
+| Render server | `build/bin/Release/IthacaRenderServer.exe` |
+
+Pro sestavení pouze render serveru (např. pro trénink):
+```bat
+cmake --build build --config Release --target IthacaRenderServer
+```
 
 ### 3. Build (Debug)
 
