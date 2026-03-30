@@ -24,7 +24,8 @@ Usage
 Protocol
 --------
 All messages are single-line JSON objects terminated with \\n.
-Server stdout is the response channel; server stderr is diagnostic logs.
+stdout is the exclusive JSON channel; stderr of the subprocess is closed.
+Server diagnostics go to a log file (default: analysis/runtime-logs/render-server.log).
 """
 
 import json
@@ -49,17 +50,21 @@ class RenderClient:
     def __init__(self,
                  server_exe: str = "build/bin/IthacaRenderServer.exe",
                  params_json: str = "analysis/params-ks-grand.json",
-                 timeout: float = 30.0):
+                 timeout: float = 30.0,
+                 log_path: str = "analysis/runtime-logs/render-server.log"):
         """
         Parameters
         ----------
         server_exe   Path to the IthacaRenderServer binary.
         params_json  Params JSON file passed as the first argv to the server.
         timeout      Default per-command timeout in seconds.
+        log_path     Server writes diagnostics here (never to stderr).
+                     Pass None or "" to disable server logging (--no-log).
         """
         self._exe        = str(server_exe)
         self._params     = str(params_json)
         self._timeout    = timeout
+        self._log_path   = log_path or None
         self._proc: Optional[subprocess.Popen] = None
         self._lock       = threading.Lock()
 
@@ -79,13 +84,19 @@ class RenderClient:
                 "Build with: cmake --build build --target IthacaRenderServer"
             )
 
+        cmd = [str(exe_path), str(params_path)]
+        if self._log_path:
+            cmd += ["--log", str(Path(self._log_path).resolve())]
+        else:
+            cmd += ["--no-log"]
+
         self._proc = subprocess.Popen(
-            [str(exe_path), str(params_path)],
+            cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=None,          # inherit parent stderr → visible in terminal
+            stderr=subprocess.DEVNULL,   # server never writes to stderr
             text=True,
-            bufsize=1,            # line-buffered
+            bufsize=1,                   # line-buffered
             encoding="utf-8",
         )
 
