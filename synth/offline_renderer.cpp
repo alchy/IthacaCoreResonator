@@ -144,8 +144,9 @@ std::vector<float> OfflineRenderer::renderNote(int   midi,
         for (int i = 0; i < (int)out.size(); i += 2)
             sum_sq += (double)out[i]*out[i] + (double)out[i+1]*out[i+1];
         const float actual_rms = static_cast<float>(std::sqrt(sum_sq / (2.0 * n_frames)));
+        // Must match resonator_voice.cpp: ((vel+1)/8)^gamma
         const float vel_gain   = (vel > 0)
-            ? std::pow(static_cast<float>(vel) / 127.f, cfg_.vel_gamma)
+            ? std::pow((float)(vel + 1) / 8.f, cfg_.vel_gamma)
             : 0.f;
         const float target_rms = cfg_.target_rms * vel_gain;
         if (actual_rms > 1e-8f && target_rms > 0.f) {
