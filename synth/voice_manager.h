@@ -135,6 +135,10 @@ public:
     void setSynthNoiseLevel           (float v) noexcept { synth_cfg_.noise_level            = v; }
     void setSynthOnsetMs              (float v) noexcept { synth_cfg_.onset_ms               = v; }
     void setSynthHarmonicBrightness   (float v) noexcept { synth_cfg_.harmonic_brightness    = v; }
+    void setSynthPitchGlide           (float v) noexcept { synth_cfg_.pitch_glide            = v; }
+    void setSynthPitchGlideTauMs      (float v) noexcept { synth_cfg_.pitch_glide_tau_ms     = v; }
+    void setSynthPitchGlideVelThresh  (int   v) noexcept { synth_cfg_.pitch_glide_vel_thresh = v; }
+    void setSynthLongitudinalPrecursor(float v) noexcept { synth_cfg_.longitudinal_precursor = v; }
     void setSynthTargetRms            (float v) noexcept { synth_cfg_.target_rms             = v; }
     void setSynthVelGamma             (float v) noexcept { synth_cfg_.vel_gamma              = v; }
 
@@ -151,6 +155,10 @@ public:
     float getSynthNoiseLevel()            const noexcept { return synth_cfg_.noise_level;            }
     float getSynthOnsetMs()               const noexcept { return synth_cfg_.onset_ms;               }
     float getSynthHarmonicBrightness()    const noexcept { return synth_cfg_.harmonic_brightness;    }
+    float getSynthPitchGlide()            const noexcept { return synth_cfg_.pitch_glide;            }
+    float getSynthPitchGlideTauMs()       const noexcept { return synth_cfg_.pitch_glide_tau_ms;     }
+    int   getSynthPitchGlideVelThresh()   const noexcept { return synth_cfg_.pitch_glide_vel_thresh; }
+    float getSynthLongitudinalPrecursor() const noexcept { return synth_cfg_.longitudinal_precursor; }
     float getSynthTargetRms()             const noexcept { return synth_cfg_.target_rms;             }
     float getSynthVelGamma()              const noexcept { return synth_cfg_.vel_gamma;              }
 

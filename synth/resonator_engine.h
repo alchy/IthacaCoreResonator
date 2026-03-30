@@ -75,6 +75,8 @@ public:
     int  blockSize()    const { return block_size_; }
 
     // ── DSP chain access (for GUI metering / state readback) ──────────────────
+    ResonatorVoiceManager& getVoiceManager() { return vm_; }
+    Logger*                getLogger()       { return logger_; }
     DspChain*          getDspChain()      { return vm_.getDspChain(); }
     float              getOutputPeakLin() const { return vm_.getOutputPeakLin(); }
     const SynthConfig& getSynthConfig()   const { return vm_.getSynthConfig(); }

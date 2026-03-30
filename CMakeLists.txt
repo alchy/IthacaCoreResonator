@@ -35,6 +35,7 @@ set(SYNTH_SOURCES
     synth/resonator_voice.cpp
     synth/voice_manager.cpp
     synth/biquad_eq.cpp
+    synth/sysex.cpp
     synth/resonator_engine.cpp
     synth/midi_input.cpp
     third_party/RtMidi.cpp
