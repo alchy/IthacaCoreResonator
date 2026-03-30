@@ -174,6 +174,11 @@ class RenderClient:
         """Return the current SynthConfig as a dict."""
         return self._send_recv({"cmd": "get_config"})["params"]
 
+    def sysex(self, bytes_: list) -> bool:
+        """Send raw SysEx bytes; returns True if the server applied them."""
+        resp = self._send_recv({"cmd": "sysex", "bytes": [int(b) for b in bytes_]})
+        return resp.get("applied", False)
+
     def reload(self, params: Optional[str] = None) -> None:
         """Reload params JSON at runtime (e.g. after re-running extract_params).
 

@@ -11,6 +11,7 @@ IthacaCoreResonator must be running and its MIDI input set to the same port.
 """
 
 import struct, sys, time, argparse
+from pathlib import Path
 import rtmidi
 
 # ── Param IDs (mirrors sysex.h) ───────────────────────────────────────────────
@@ -202,6 +203,96 @@ def verify_codec():
         print(f"  {errors} errors")
     print()
 
+# ── Routing verification (via IthacaRenderServer) ─────────────────────────────
+
+def verify_routing(server_exe: str, params_json: str):
+    """
+    Verify that every param ID routes to the correct SynthConfig field.
+
+    Sends SET_PARAM for each of the 19 params via the RenderServer 'sysex'
+    command (JSON IPC — no real MIDI needed), then reads back with get_config
+    and compares. Encoding is lossless (full 32-bit IEEE 754), so values must
+    match exactly (within float epsilon).
+    """
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from analysis.render_client import RenderClient
+
+    # Test values chosen to be within range and distinct from defaults
+    TEST_VALUES = {
+        "pan_spread":             0.77,
+        "stereo_decorr":          0.33,
+        "stereo_boost":           2.5,
+        "pan_tilt":               0.65,
+        "stereo_decorr_midi_lo":  55.0,
+        "stereo_decorr_midi_hi":  90.0,
+        "stereo_decorr_max":      0.30,
+        "beat_scale":             1.75,
+        "harmonic_brightness":    0.5,
+        "eq_strength":            0.6,
+        "eq_freq_min":            600.0,
+        "pitch_glide":            0.015,
+        "pitch_glide_tau_ms":     200.0,
+        "pitch_glide_vel_thresh": 64,     # int param
+        "target_rms":             0.04,
+        "vel_gamma":              1.2,
+        "noise_level":            0.5,
+        "onset_ms":               8.0,
+        "longitudinal_precursor": 0.3,
+    }
+
+    print("=== Routing verification via IthacaRenderServer ===")
+    print(f"  server: {server_exe}")
+    print(f"  params: {params_json}\n")
+
+    passed = 0
+    failed = 0
+
+    with RenderClient(server_exe, params_json) as rc:
+        for name, test_val in TEST_VALUES.items():
+            pid, lo, hi, _ = PARAMS[name]
+
+            # Send SET_PARAM via sysex command
+            msg = build_set_param(pid, float(test_val))
+            applied = rc.sysex(msg)
+            if not applied:
+                print(f"  FAIL  {name:30s}  sysex not applied (unknown pid?)")
+                failed += 1
+                continue
+
+            # Read back via get_config
+            cfg = rc.get_config()
+            got = cfg.get(name)
+            if got is None:
+                print(f"  FAIL  {name:30s}  key missing in get_config response")
+                failed += 1
+                continue
+
+            # For int param: compare as int
+            if name == "pitch_glide_vel_thresh":
+                expected = int(test_val)
+                ok = int(got) == expected
+                desc = f"expected {expected}  got {int(got)}"
+            else:
+                expected = float(test_val)
+                diff = abs(got - expected)
+                ok = diff < 1e-5
+                desc = f"expected {expected:.6f}  got {got:.6f}  diff={diff:.2e}"
+
+            status = "OK   " if ok else "FAIL "
+            print(f"  {status} {name:30s}  {desc}")
+            if ok:
+                passed += 1
+            else:
+                failed += 1
+
+    print(f"\n  {passed}/{passed+failed} passed")
+    if failed:
+        print("  ROUTING ERRORS — check sysexApplyParam() switch-case")
+        sys.exit(1)
+    else:
+        print("  All key->value routes verified")
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -209,11 +300,21 @@ if __name__ == "__main__":
     parser.add_argument("--list",    action="store_true", help="List MIDI output ports and exit")
     parser.add_argument("--port",    type=int, default=-1, help="MIDI output port index")
     parser.add_argument("--verify",  action="store_true", help="Run codec round-trip only (no MIDI)")
+    parser.add_argument("--verify-routing", action="store_true",
+                        help="Verify key->value routing via IthacaRenderServer (no MIDI needed)")
+    parser.add_argument("--server",  default="build/bin/Release/IthacaRenderServer.exe",
+                        help="Path to IthacaRenderServer executable")
+    parser.add_argument("--params",  default="analysis/params-ks-grand.json",
+                        help="Params JSON for IthacaRenderServer")
     args = parser.parse_args()
 
     verify_codec()
 
     if args.verify:
+        sys.exit(0)
+
+    if args.verify_routing:
+        verify_routing(args.server, args.params)
         sys.exit(0)
 
     ports = list_ports()

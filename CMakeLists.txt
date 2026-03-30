@@ -212,6 +212,7 @@ set(RENDER_SYNTH_SOURCES
     synth/resonator_voice.cpp
     synth/voice_manager.cpp
     synth/biquad_eq.cpp
+    synth/sysex.cpp
     synth/offline_renderer.cpp
     synth/render_server.cpp
 )

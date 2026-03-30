@@ -10,6 +10,7 @@
 #include "render_server.h"
 
 #include "../third_party/json.hpp"
+#include "sysex.h"
 
 #include <iostream>
 #include <string>
@@ -158,6 +159,25 @@ std::string RenderServer::handleLine(const std::string& line) {
         }
         params_path_ = path;
         return ok().dump();
+    }
+
+    // ── sysex ─────────────────────────────────────────────────────────────────
+    // Apply a raw SysEx message (as array of ints) and sync SynthConfig back.
+    // Useful for verifying that key→value routing is correct via get_config.
+    if (cmd == "sysex") {
+        if (!req.contains("bytes"))
+            return err("sysex requires 'bytes' array").dump();
+        std::vector<uint8_t> msg;
+        for (auto& b : req.at("bytes"))
+            msg.push_back(static_cast<uint8_t>(b.get<int>()));
+        const bool applied = sysexApply(msg, renderer_.getVoiceManager());
+        if (applied) {
+            // Sync the vm's updated SynthConfig back to cfg_ so get_config reflects it
+            renderer_.setSynthConfig(renderer_.getVoiceManager().getSynthConfig());
+        }
+        json r = ok();
+        r["applied"] = applied;
+        return r.dump();
     }
 
     // ── quit ──────────────────────────────────────────────────────────────────

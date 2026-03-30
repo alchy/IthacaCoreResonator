@@ -28,6 +28,10 @@
  *       Reload params JSON at runtime (e.g. after extract-params finishes).
  *       → {"status":"ok"}
  *
+ *   {"cmd":"sysex","bytes":[0xF0,0x7D,...,0xF7]}
+ *       Apply a raw ICR SysEx message; syncs SynthConfig so get_config reflects result.
+ *       → {"status":"ok","applied":true/false}
+ *
  *   {"cmd":"quit"}
  *       → {"status":"ok"}   (then server exits)
  */

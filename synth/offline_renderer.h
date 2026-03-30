@@ -45,6 +45,8 @@ public:
 
     bool isInitialized() const { return initialized_; }
 
+    ResonatorVoiceManager& getVoiceManager() { return vm_; }
+
 private:
     ResonatorVoiceManager vm_;
     SynthConfig           cfg_;
