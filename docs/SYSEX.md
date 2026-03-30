@@ -286,7 +286,7 @@ python analysis/sysex_test.py --port 1
 ICR log:
 ```
 [INF][SYSEX] Applied type=0x01 (15 bytes)   × 11  — SET_PARAM (8 params + 3 clamp testy)
-[INF][SYSEX] Applied type=0x04 (159 bytes)  × 2   — SET_ALL (defaults, restore)
+[INF][SYSEX] Applied type=0x04 (167 bytes)  × 2   — SET_ALL (defaults, restore)
 [WRN][SYSEX] Unhandled type=0x02 (10 bytes) × 3   — GET_PARAM (očekáváno)
 [WRN][SYSEX] Unhandled type=0x05 (7 bytes)  × 1   — REQUEST_ALL (očekáváno)
 [WRN][SYSEX] Invalid SysEx (10 bytes) — ignored   × 1   — bad signature test OK
