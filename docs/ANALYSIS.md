@@ -147,11 +147,12 @@ Also cross-product combinations `f_i ± f_j` (stronger in bass/forte).
    the field; C++ side is ready.
 
 **Phase B — Medium effort, high impact:**
-4. Phantom partials (longitudinal) — C++ side ready:
-   - `PartialParams::is_longitudinal` flag added; `is_longitudinal=true` forces `mono=true`.
-   - Rendered identically to transverse partials but with `f≈2·f_k`, `τ≈τ/2`, single-string, no beating.
-   - ✅ C++ render path complete. **Pending**: `resonators/analysis::extract-params.py` extension
-     to detect longitudinal peaks and emit `"is_longitudinal": true` entries in `params.json`.
+4. ✅ Phantom partials (longitudinal) — fully implemented end-to-end:
+   - `PartialParams::is_longitudinal` flag; `is_longitudinal=true` forces `mono=true`.
+   - Rendered identically to transverse partials at `f≈2·f_k`, `τ≈τ/2`, single-string, no beating.
+   - `extract_params.py::detect_longitudinal_partials()` detects peaks at `2·f_k` in spectrum.
+   - `params-ks-grand.json`: 886 longitudinal partial entries across 224 bass samples (midi ≤ 48).
+   - `note_lut.cpp`: loads `is_longitudinal` flag and sets `mono=true` automatically.
 5. ✅ Longitudinal precursor (bass, MIDI < 50) — short high-frequency noise burst at noteOn
    for bass notes. Controlled by `SynthConfig::longitudinal_precursor` (default 0.0 = off).
    Duration auto-scaled to 2 string cycles (≈ 2/f₀), capped at 10 ms.
