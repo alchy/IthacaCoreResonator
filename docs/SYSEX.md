@@ -217,3 +217,73 @@ midi_out.send_message(list(msg))
 
 Všechny příchozí hodnoty jsou clamped na definovaný rozsah (viz tabulky).
 Neznámá `param_id` → `sysexApplyParam()` vrátí `false`, zpráva se ignoruje.
+
+### Logování (ICR strana)
+
+SysEx callback loguje přes `Logger` (stdout v interaktivním režimu, stderr s `--verbose`, muted v server kontextu):
+
+```
+[INF][SYSEX] Applied type=0x01 (15 bytes)    — SET_PARAM OK
+[INF][SYSEX] Applied type=0x04 (159 bytes)   — SET_ALL OK
+[WRN][SYSEX] Unhandled type=0x02 (10 bytes)  — GET_PARAM (žádný MIDI výstup)
+[WRN][SYSEX] Unhandled type=0x05 (7 bytes)   — REQUEST_ALL (žádný MIDI výstup)
+[WRN][SYSEX] Invalid SysEx (10 bytes) — ignored  — špatný MFR/SIG
+```
+
+GET_PARAM (0x02) a REQUEST_ALL (0x05) jsou validovány a logovány, ale odpověď není odesílána —
+ICR nemá MIDI výstupní port. Tyto typy jsou připraveny pro budoucí bi-directional patch editor.
+
+---
+
+## Testování
+
+### Prerekvizity
+
+- **loopMIDI** (Windows) nebo ekvivalentní virtuální MIDI kabel (macOS: IAC Driver)
+- `python-rtmidi`: `pip install python-rtmidi`
+- `analysis/sysex_test.py` — testovací helper (součást repozitáře)
+
+### Postup
+
+**1. Spustit IthacaCoreResonator** s MIDI vstupem na loopMIDI:
+
+```
+IthacaCoreResonator.exe analysis/params-ks-grand.json 0
+```
+
+Ověřit v logu:
+```
+[MIDI] Opened: loopMIDI Port 0
+```
+
+**2. Spustit test helper** (druhý terminál):
+
+```
+python analysis/sysex_test.py
+```
+
+Auto-vybere první non-GS port (loopMIDI výstup). Explicitní port: `--port 1`.
+
+Dostupné přepínače:
+```
+--list     vypíše MIDI výstupní porty a skončí
+--port N   zvolí port N
+--verify   pouze codec round-trip test (bez MIDI)
+```
+
+### Výsledky ověřeného testu (2026-03-30)
+
+```
+python analysis/sysex_test.py --port 1
+```
+
+ICR log:
+```
+[INF][SYSEX] Applied type=0x01 (15 bytes)   × 11  — SET_PARAM (8 params + 3 clamp testy)
+[INF][SYSEX] Applied type=0x04 (159 bytes)  × 2   — SET_ALL (defaults, restore)
+[WRN][SYSEX] Unhandled type=0x02 (10 bytes) × 3   — GET_PARAM (očekáváno)
+[WRN][SYSEX] Unhandled type=0x05 (7 bytes)  × 1   — REQUEST_ALL (očekáváno)
+[WRN][SYSEX] Invalid SysEx (10 bytes) — ignored   × 1   — bad signature test OK
+```
+
+Codec round-trip: **19 params + 20 random floats — vše OK**.
