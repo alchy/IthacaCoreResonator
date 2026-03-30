@@ -26,17 +26,17 @@ bool OfflineRenderer::initialize(const std::string& params_json_path,
                                   Logger& logger,
                                   float   sr)
 {
-    logger_ = &logger;
+    logger_ = logger;
     try {
-        vm_.initialize(params_json_path, sr, logger);
+        vm_.initialize(params_json_path, sr, logger_);
         vm_.prepareToPlay(BLOCK_SIZE);
         // Push our config into the voice manager (no-op initially, cfg_ is default)
         current_sr_  = sr;
         initialized_ = true;
         return true;
     } catch (const std::exception& e) {
-        logger.log("OfflineRenderer", LogSeverity::Error,
-                   std::string("initialize failed: ") + e.what());
+        logger_.log("OfflineRenderer", LogSeverity::Error,
+                    std::string("initialize failed: ") + e.what());
         return false;
     }
 }
@@ -52,7 +52,7 @@ std::vector<float> OfflineRenderer::renderNote(int   midi,
 
     // Re-initialize voice pool if sample rate changed
     if (static_cast<float>(sr) != current_sr_) {
-        vm_.changeSampleRate(static_cast<float>(sr), *logger_);
+        vm_.changeSampleRate(static_cast<float>(sr), logger_);
         vm_.prepareToPlay(BLOCK_SIZE);
         current_sr_ = static_cast<float>(sr);
     }
@@ -167,8 +167,8 @@ int OfflineRenderer::renderNoteToFile(int midi, int vel, float duration_s,
 
     const int n_frames = static_cast<int>(pcm.size()) / 2;
     if (!writeWavF32(output_path, pcm.data(), n_frames, sr, 2)) {
-        if (logger_) logger_->log("OfflineRenderer", LogSeverity::Error,
-                                   "writeWavF32 failed: " + output_path);
+        logger_.log("OfflineRenderer", LogSeverity::Error,
+                    "writeWavF32 failed: " + output_path);
         return -1;
     }
     return n_frames;

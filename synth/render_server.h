@@ -76,6 +76,6 @@ private:
     bool sendAll(sock_t fd, const std::string& data);
 
     OfflineRenderer renderer_;
-    Logger*         logger_      = nullptr;
+    Logger          logger_;               // silent by default; set in initialize()
     std::string     params_path_;
 };

@@ -21,7 +21,6 @@
 #include "midi_input.h"
 #include "note_lut.h"
 #include <cstring>
-#include <cstdio>
 #include <stdexcept>
 #include <algorithm>
 #include <memory>
@@ -71,7 +70,7 @@ ResonatorEngine::~ResonatorEngine() {
 
 bool ResonatorEngine::initialize(const std::string& params_json_path,
                                   Logger& logger) {
-    logger_ = &logger;
+    logger_ = logger;
     logger.log("ResonatorEngine", LogSeverity::Info, "Initializing...");
 
     vm_.initialize(params_json_path, sample_rate_, logger);
@@ -136,7 +135,7 @@ void ResonatorEngine::processBlock(float* out_interleaved, uint32_t frame_count)
 // ── start / stop ─────────────────────────────────────────────────────────────
 
 bool ResonatorEngine::start() {
-    if (!logger_ || !vm_.isInitialized()) return false;
+    if (!vm_.isInitialized()) return false;
 
     ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
     cfg.playback.format   = ma_format_f32;
@@ -147,18 +146,18 @@ bool ResonatorEngine::start() {
     cfg.periodSizeInFrames= block_size_;
 
     if (ma_device_init(nullptr, &cfg, device_) != MA_SUCCESS) {
-        logger_->log("ResonatorEngine", LogSeverity::Error, "Failed to open audio device");
+        logger_.log("ResonatorEngine", LogSeverity::Error, "Failed to open audio device");
         return false;
     }
 
     if (ma_device_start(device_) != MA_SUCCESS) {
-        logger_->log("ResonatorEngine", LogSeverity::Error, "Failed to start audio device");
+        logger_.log("ResonatorEngine", LogSeverity::Error, "Failed to start audio device");
         ma_device_uninit(device_);
         return false;
     }
 
     running_.store(true);
-    logger_->log("ResonatorEngine", LogSeverity::Info,
+    logger_.log("ResonatorEngine", LogSeverity::Info,
         "Audio device started: " + std::string(device_->playback.name));
     return true;
 }
@@ -168,7 +167,7 @@ void ResonatorEngine::stop() {
     ma_device_stop(device_);
     ma_device_uninit(device_);
     running_.store(false);
-    if (logger_) logger_->log("ResonatorEngine", LogSeverity::Info, "Audio device stopped");
+    logger_.log("ResonatorEngine", LogSeverity::Info, "Audio device stopped");
 }
 
 // ── Thread-safe MIDI interface ────────────────────────────────────────────────
@@ -191,7 +190,7 @@ void ResonatorEngine::setLimiterThreshold   (uint8_t v) { vm_.setLimiterThreshol
 void ResonatorEngine::setLimiterRelease     (uint8_t v) { vm_.setLimiterReleaseMIDI(v);      }
 void ResonatorEngine::setBBEDefinition      (uint8_t v) { vm_.setBBEDefinitionMIDI(v);       }
 void ResonatorEngine::setBBEBassBoost       (uint8_t v) { vm_.setBBEBassBoostMIDI(v);        }
-void ResonatorEngine::setAllVoicesMasterGain(uint8_t v) { vm_.setAllVoicesMasterGainMIDI(v, *logger_); }
+void ResonatorEngine::setAllVoicesMasterGain(uint8_t v) { vm_.setAllVoicesMasterGainMIDI(v, logger_); }
 void ResonatorEngine::setAllVoicesPan       (uint8_t v) { vm_.setAllVoicesPanMIDI(v);        }
 void ResonatorEngine::setAllVoicesPanSpeed  (uint8_t v) { vm_.setAllVoicesPanSpeedMIDI(v);   }
 void ResonatorEngine::setAllVoicesPanDepth  (uint8_t v) { vm_.setAllVoicesPanDepthMIDI(v);   }
@@ -221,9 +220,9 @@ int runResonator(Logger& logger, const std::string& params_json_path,
     MidiInput midi;
     auto ports = MidiInput::listPorts();
     if (!ports.empty()) {
-        std::printf("[MIDI] Available ports:\n");
         for (int i = 0; i < (int)ports.size(); i++)
-            std::printf("  [%d] %s\n", i, ports[i].c_str());
+            logger.log("MIDI", LogSeverity::Info,
+                       "port [" + std::to_string(i) + "] " + ports[i]);
         midi.open(*engine, midi_port);
     }
 #ifndef _WIN32
@@ -236,7 +235,8 @@ int runResonator(Logger& logger, const std::string& params_json_path,
     const int  midis[] = { 60, 62, 64, 65, 67, 69, 71, 72 };
     bool       sustain = false;
 
-    std::printf("\nKeyboard fallback: a-k = C4-C5  |  z = sustain  |  q = quit\n\n");
+    logger.log("runResonator", LogSeverity::Info,
+               "Keyboard fallback: a-k = C4-C5  |  z = sustain  |  q = quit");
 
 #ifdef _WIN32
     while (true) {
@@ -246,7 +246,8 @@ int runResonator(Logger& logger, const std::string& params_json_path,
             if (ch == 'z') {
                 sustain = !sustain;
                 engine->sustainPedal(sustain ? 127 : 0);
-                std::printf("Sustain: %s\n", sustain ? "ON" : "OFF");
+                logger.logRT("runResonator", LogSeverity::Info,
+                             sustain ? "Sustain ON" : "Sustain OFF");
                 continue;
             }
             for (int i = 0; i < 8; i++) {
@@ -273,7 +274,8 @@ int runResonator(Logger& logger, const std::string& params_json_path,
             if (ch == 'z') {
                 sustain = !sustain;
                 engine->sustainPedal(sustain ? 127 : 0);
-                std::printf("Sustain: %s\n", sustain ? "ON" : "OFF");
+                logger.logRT("runResonator", LogSeverity::Info,
+                             sustain ? "Sustain ON" : "Sustain OFF");
             }
             for (int i = 0; i < 8; i++) {
                 if (ch == keys[i]) {

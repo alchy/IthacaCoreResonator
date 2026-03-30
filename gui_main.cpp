@@ -7,7 +7,6 @@
  */
 #include "synth/resonator_engine.h"
 #include "gui/resonator_gui.h"
-#include <iostream>
 #include <string>
 #include <cstdlib>
 #include <cstdio>
@@ -15,17 +14,16 @@
 
 int main(int argc, char* argv[]) {
     setvbuf(stdout, nullptr, _IONBF, 0);
-    setvbuf(stderr, nullptr, _IONBF, 0);
 
     const std::string params_json = (argc > 1)
         ? argv[1]
         : "soundbanks/salamander.json";
 
-    try {
-        Logger logger(".", stdout);
-        logger.log("main", LogSeverity::Info,
-                   "=== IthacaCoreResonatorGUI STARTING ===");
+    // log() and logRT() both go to stdout in interactive mode.
+    Logger logger(stdout, stdout);
+    logger.log("main", LogSeverity::Info, "=== IthacaCoreResonatorGUI STARTING ===");
 
+    try {
         auto engine = std::make_unique<ResonatorEngine>();
         if (!engine->initialize(params_json, logger)) {
             logger.log("main", LogSeverity::Error, "Engine init failed");
@@ -39,12 +37,12 @@ int main(int argc, char* argv[]) {
         int ret = runResonatorGui(*engine, logger, params_json);
 
         engine->stop();
-        logger.log("main", LogSeverity::Info,
-                   "=== IthacaCoreResonatorGUI STOPPED ===");
+        logger.log("main", LogSeverity::Info, "=== IthacaCoreResonatorGUI STOPPED ===");
         return ret;
 
     } catch (const std::exception& e) {
-        std::cerr << "CRITICAL ERROR: " << e.what() << "\n";
+        logger.log("main", LogSeverity::Critical,
+                   std::string("FATAL: ") + e.what());
         return 1;
     }
 }

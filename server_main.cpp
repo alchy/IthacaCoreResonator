@@ -48,34 +48,33 @@ int main(int argc, char* argv[]) {
         log_file = std::fopen(log_path.c_str(), "w");
     }
 
-    auto flog = [&](const char* msg) {
-        if (log_file) { std::fprintf(log_file, "%s\n", msg); std::fflush(log_file); }
-    };
-
-    flog(("[IthacaRenderServer] params: " + params_json).c_str());
-    flog(("[IthacaRenderServer] port:   " + std::to_string(port)).c_str());
+    // Logger created before try so it's accessible in catch blocks.
+    // log() writes to log_file; no RT channel needed (offline rendering).
+    Logger logger(log_file, nullptr);
+    logger.log("RenderServer", LogSeverity::Info, "params: " + params_json);
+    logger.log("RenderServer", LogSeverity::Info, "port:   " + std::to_string(port));
 
     try {
-        Logger logger(".", log_file);
         auto server = std::make_unique<RenderServer>();
 
         if (!server->initialize(params_json, logger)) {
-            flog("[IthacaRenderServer] initialization failed");
+            logger.log("RenderServer", LogSeverity::Error, "initialization failed");
             if (log_file) std::fclose(log_file);
             return 1;
         }
 
         int ret = server->runTCP(port);
-        flog("[IthacaRenderServer] stopped");
+        logger.log("RenderServer", LogSeverity::Info, "stopped");
         if (log_file) std::fclose(log_file);
         return ret;
 
     } catch (const std::exception& e) {
-        flog((std::string("[IthacaRenderServer] FATAL: ") + e.what()).c_str());
+        logger.log("RenderServer", LogSeverity::Critical,
+                   std::string("FATAL: ") + e.what());
         if (log_file) std::fclose(log_file);
         return 1;
     } catch (...) {
-        flog("[IthacaRenderServer] UNKNOWN FATAL ERROR");
+        logger.log("RenderServer", LogSeverity::Critical, "UNKNOWN FATAL ERROR");
         if (log_file) std::fclose(log_file);
         return 1;
     }

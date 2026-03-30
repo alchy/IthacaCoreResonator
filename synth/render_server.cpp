@@ -83,9 +83,9 @@ static void apply_config(const json& j, SynthConfig& c) {
 bool RenderServer::initialize(const std::string& params_json_path,
                                Logger& logger)
 {
-    logger_      = &logger;
+    logger_      = logger;
     params_path_ = params_json_path;
-    return renderer_.initialize(params_json_path, logger);
+    return renderer_.initialize(params_json_path, logger_);
 }
 
 // ── handleLine ────────────────────────────────────────────────────────────────
@@ -155,7 +155,7 @@ std::string RenderServer::handleLine(const std::string& line) {
     // ── reload ────────────────────────────────────────────────────────────────
     if (cmd == "reload") {
         const std::string path = req.value("params", params_path_);
-        if (!renderer_.initialize(path, *logger_)) {
+        if (!renderer_.initialize(path, logger_)) {
             return err("reload failed: " + path).dump();
         }
         params_path_ = path;
@@ -228,14 +228,14 @@ int RenderServer::runTCP(int port) {
 #ifdef _WIN32
     WSADATA wsa{};
     if (::WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-        if (logger_) logger_->log("RenderServer", LogSeverity::Error, "WSAStartup failed");
+        logger_.log("RenderServer", LogSeverity::Error, "WSAStartup failed");
         return 1;
     }
 #endif
 
     sock_t srv = ::socket(AF_INET, SOCK_STREAM, 0);
     if (!sock_valid(srv)) {
-        if (logger_) logger_->log("RenderServer", LogSeverity::Error, "socket() failed");
+        logger_.log("RenderServer", LogSeverity::Error, "socket() failed");
         return 1;
     }
 
@@ -250,22 +250,22 @@ int RenderServer::runTCP(int port) {
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);   // 127.0.0.1 only
 
     if (::bind(srv, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
-        if (logger_) logger_->log("RenderServer", LogSeverity::Error,
-                                   "bind() failed on port " + std::to_string(port));
+        logger_.log("RenderServer", LogSeverity::Error,
+                    "bind() failed on port " + std::to_string(port));
         sock_close(srv);
         return 1;
     }
 
     ::listen(srv, 1);
-    if (logger_) logger_->log("RenderServer", LogSeverity::Info,
-                               "Listening on 127.0.0.1:" + std::to_string(port));
+    logger_.log("RenderServer", LogSeverity::Info,
+                "Listening on 127.0.0.1:" + std::to_string(port));
 
     bool server_quit = false;
     while (!server_quit) {
         sock_t cli = ::accept(srv, nullptr, nullptr);
         if (!sock_valid(cli)) break;
 
-        if (logger_) logger_->log("RenderServer", LogSeverity::Info, "Client connected");
+        logger_.log("RenderServer", LogSeverity::Info, "Client connected");
 
         // Greet the client
         sendAll(cli, json{{"status", "ready"}}.dump() + "\n");
@@ -284,7 +284,7 @@ int RenderServer::runTCP(int port) {
         }
 
         sock_close(cli);
-        if (logger_) logger_->log("RenderServer", LogSeverity::Info, "Client disconnected");
+        logger_.log("RenderServer", LogSeverity::Info, "Client disconnected");
     }
 
     sock_close(srv);

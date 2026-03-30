@@ -50,7 +50,7 @@ public:
 private:
     ResonatorVoiceManager vm_;
     SynthConfig           cfg_;
-    Logger*               logger_      = nullptr;
+    Logger                logger_;               // silent by default; set in initialize()
     bool                  initialized_ = false;
     float                 current_sr_  = 0.f;
 
