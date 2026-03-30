@@ -73,6 +73,7 @@ std::vector<float> OfflineRenderer::renderNote(int   midi,
     vm_.setSynthHarmonicBrightness   (cfg_.harmonic_brightness);
     vm_.setSynthTargetRms            (cfg_.target_rms);
     vm_.setSynthVelGamma             (cfg_.vel_gamma);
+    vm_.setSynthRenderRefDuration    (cfg_.render_ref_duration_s);
 
     // Stop any lingering voices
     vm_.stopAllVoices();
@@ -132,6 +133,27 @@ std::vector<float> OfflineRenderer::renderNote(int   midi,
     }
 
     vm_.stopAllVoices();
+
+    // ── Post-render RMS normalization ─────────────────────────────────────────
+    // Matches Python synthesize_note(): normalize to target_rms * vel_gain AFTER
+    // the full signal is rendered.  Corrects for inter-string phase cross-terms
+    // (random initial phases produce variance around the formula's prediction).
+    const int n_frames = static_cast<int>(out.size()) / 2;
+    if (n_frames > 0) {
+        double sum_sq = 0.0;
+        for (int i = 0; i < (int)out.size(); i += 2)
+            sum_sq += (double)out[i]*out[i] + (double)out[i+1]*out[i+1];
+        const float actual_rms = static_cast<float>(std::sqrt(sum_sq / (2.0 * n_frames)));
+        const float vel_gain   = (vel > 0)
+            ? std::pow(static_cast<float>(vel) / 127.f, cfg_.vel_gamma)
+            : 0.f;
+        const float target_rms = cfg_.target_rms * vel_gain;
+        if (actual_rms > 1e-8f && target_rms > 0.f) {
+            const float scale = target_rms / actual_rms;
+            for (float& s : out) s *= scale;
+        }
+    }
+
     return out;
 }
 

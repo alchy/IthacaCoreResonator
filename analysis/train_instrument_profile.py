@@ -237,13 +237,13 @@ def build_dataset(samples: dict) -> dict:
                     eq_data.append((mf, ff, float(g)))
 
         # noise model: attack_tau_s, centroid_hz, A_noise
+        # A_noise: extract_params.py writes "A_noise" (peak noise RMS at onset).
+        # Fall back to "floor_rms" for compatibility with older JSON runs.
         noise = s.get("noise") or {}
-        atk_tau = noise.get("attack_tau_s") or 0
-        centroid = noise.get("centroid_hz") or 0
-        A_noise  = noise.get("A_noise") or 0
-        if atk_tau > 0.001 and centroid > 50:
-            if A_noise < 0.001:
-                A_noise = 0.06  # fall back to physical default if not stored
+        atk_tau  = noise.get("attack_tau_s") or 0
+        centroid  = noise.get("centroid_hz") or 0
+        A_noise   = noise.get("A_noise") or noise.get("floor_rms") or 0
+        if atk_tau > 0.001 and centroid > 50 and A_noise > 0.001:
             noise_data.append((mf, vf,
                                 math.log(max(atk_tau, 1e-4)),
                                 math.log(max(centroid, 10.0)),
@@ -274,11 +274,14 @@ def build_dataset(samples: dict) -> dict:
                     log_r = min(0.5, math.log(ratio))
                     tau_data.append((mf, kf, log_r))
 
-            # A0 ratio (k >= 1, normalised to k=1)
+            # A0 ratio (k >= 1, normalised to k=1).
+            # Reject extreme inversions (ratio > 20x) — these indicate STFT extraction
+            # failure where spurious energy inflates A0 for a partial. Also reject
+            # near-zero ratios (< 1/100) which are typically noise floor artifacts.
             a0 = p.get("A0") or 0
             if a0 > 0 and a0_k1 > 0:
                 ratio = a0 / a0_k1
-                if ratio > 1e-5:
+                if 0.01 < ratio < 20.0:
                     A0_data.append((mf, kf, vf, math.log(ratio)))
 
             # beating (stored as beat_hz in params.json)
@@ -315,7 +318,7 @@ def build_dataset(samples: dict) -> dict:
     # tau ratios: use tight IQR (1.5x) — extreme ratio outliers are extraction artifacts
     tau_data      = iqr_filter_list(tau_data,      2, k_iqr=1.5)
     tau1_k1_data  = iqr_filter_list(tau1_k1_data,  2)
-    A0_data       = iqr_filter_list(A0_data,        3)
+    A0_data       = iqr_filter_list(A0_data,        3, k_iqr=2.0)
     df_data       = iqr_filter_list(df_data,        2)
     noise_data    = iqr_filter_list(noise_data,     2)  # filter on log(attack_tau)
     biexp_data    = iqr_filter_list(biexp_data,     3)  # filter on logit(a1)
@@ -390,10 +393,29 @@ def build_dataset(samples: dict) -> dict:
     )
 
 
+# ── Eval loss (no smoothness penalty, no grad) ────────────────────────────────
+
+def _eval_loss(model: InstrumentProfile, ds: dict) -> float:
+    """MSE loss on held-out eval set. Used to detect overfitting."""
+    b = ds.get("batches", {})
+    model.eval()
+    terms = []
+    with torch.no_grad():
+        if "B_mf"     in b: terms.append(nn.functional.mse_loss(model.forward_B(b["B_mf"]).squeeze(-1),        b["B_y"]))
+        if "dur_mf"   in b: terms.append(nn.functional.mse_loss(model.forward_dur(b["dur_mf"]).squeeze(-1),    b["dur_y"]))
+        if "tk1_mf"   in b: terms.append(nn.functional.mse_loss(model.forward_tau1_k1(b["tk1_mf"], b["tk1_vf"]).squeeze(-1), b["tk1_y"]))
+        if "tau_mf"   in b: terms.append(nn.functional.mse_loss(model.forward_tau_ratio(b["tau_mf"], b["tau_kf"]).squeeze(-1), b["tau_y"]))
+        if "a0_mf"    in b: terms.append(nn.functional.mse_loss(model.forward_A0(b["a0_mf"], b["a0_kf"], b["a0_vf"]).squeeze(-1), b["a0_y"]))
+        if "noise_mf" in b: terms.append(nn.functional.mse_loss(model.forward_noise(b["noise_mf"], b["noise_vf"]), b["noise_y"]))
+    model.train()
+    return float(sum(t.item() for t in terms) / len(terms)) if terms else 0.0
+
+
 # ── Training ──────────────────────────────────────────────────────────────────
 
 def train(model: InstrumentProfile, ds: dict, epochs: int = 800,
-          lr: float = 3e-3, verbose: bool = True) -> list[float]:
+          lr: float = 3e-3, verbose: bool = True,
+          ds_eval: dict | None = None) -> list[float]:
     opt = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=lr * 0.01)
     b = ds["batches"]
@@ -478,7 +500,12 @@ def train(model: InstrumentProfile, ds: dict, epochs: int = 800,
 
         losses.append(float(loss.detach()))
         if verbose and epoch % 100 == 0:
-            print(f"  epoch {epoch:4d}/{epochs}  loss={loss.item():.6f}  lr={sched.get_last_lr()[0]:.2e}")
+            eval_str = ""
+            if ds_eval is not None:
+                el = _eval_loss(model, ds_eval)
+                eval_str = f"  eval={el:.6f}"
+                model.train()
+            print(f"  epoch {epoch:4d}/{epochs}  loss={loss.item():.6f}  lr={sched.get_last_lr()[0]:.2e}{eval_str}")
 
     return losses
 
@@ -599,21 +626,21 @@ def generate_profile(
                     partials.append(entry)
 
                 sample = {
-                    "midi":       midi,
-                    "vel":        vel,
-                    "B":          round(float(B), 8),
-                    "duration_s": round(float(dur), 3),
-                    "partials":   partials,
-                    "noise":      noise_out,
-                    "_from_profile": True,
+                    "midi":         midi,
+                    "vel":          vel,
+                    "B":            round(float(B), 8),
+                    "duration_s":   round(float(dur), 3),
+                    "partials":     partials,
+                    "noise":        noise_out,
+                    "_interpolated": True,   # NN-generated; build_dataset skips these on re-train
                 }
                 if spectral_eq:
                     sample["spectral_eq"] = spectral_eq
 
-                # Preserve original if available (trust measured data)
+                # Preserve original measured sample (trust measured data over NN prediction)
                 if orig_samples and key in orig_samples and not orig_samples[key].get("_interpolated"):
                     sample = copy.deepcopy(orig_samples[key])
-                    sample["_from_profile"] = False
+                    sample["_interpolated"] = False   # measured sample, not interpolated
 
                 samples_out[key] = sample
 
@@ -636,6 +663,8 @@ def main():
     ap.add_argument("--sr",        type=int,   default=44100)
     ap.add_argument("--no-preserve-orig", action="store_true",
                     help="Replace all samples with NN output, even available ones")
+    ap.add_argument("--eval-every", type=int, default=10,
+                    help="Hold out every Nth MIDI note for eval (0 = no eval split)")
     ap.add_argument("--plot", action="store_true")
     args = ap.parse_args()
 
@@ -643,21 +672,41 @@ def main():
     raw = json.loads(Path(args.inp).read_text())
     samples = raw["samples"]
 
-    n_avail = sum(1 for s in samples.values() if not s.get("_interpolated"))
+    # Only train on original measured samples (not previously NN-interpolated)
+    measured = {k: v for k, v in samples.items() if not v.get("_interpolated")}
+    n_avail = len(measured)
     print(f"Available measured samples: {n_avail}")
 
+    # Train / eval split: hold out every Nth MIDI note across the keyboard.
+    # Held-out notes must be interpolated by the NN — a direct measure of generalisation.
+    ds_eval = None
+    if args.eval_every > 0 and n_avail > 20:
+        midi_notes = sorted({v["midi"] for v in measured.values() if "midi" in v})
+        eval_midis = set(midi_notes[i] for i in range(0, len(midi_notes), args.eval_every))
+        train_samples = {k: v for k, v in measured.items() if v.get("midi") not in eval_midis}
+        eval_samples  = {k: v for k, v in measured.items() if v.get("midi") in eval_midis}
+        print(f"Train/eval split: {len(train_samples)} train, {len(eval_samples)} eval "
+              f"(held-out MIDI: {sorted(eval_midis)[:5]}...)")
+    else:
+        train_samples = measured
+        eval_samples  = {}
+
     print("Building dataset ...")
-    ds = build_dataset(samples)
+    ds = build_dataset(train_samples)
     print(f"  B={ds['n_B']}  tau={ds['n_tau']}  tau1_k1={ds['n_tau1_k1']}  "
           f"A0={ds['n_A0']}  df={ds['n_df']}  eq={ds['n_eq']}  "
           f"noise={ds['n_noise']}  biexp={ds['n_biexp']}")
+
+    if eval_samples:
+        ds_eval = build_dataset(eval_samples)
+        print(f"  eval — B={ds_eval['n_B']}  A0={ds_eval['n_A0']}  tau1_k1={ds_eval['n_tau1_k1']}")
 
     model = InstrumentProfile(hidden=args.hidden)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
 
     print(f"Training {args.epochs} epochs ...")
-    train(model, ds, epochs=args.epochs, lr=args.lr)
+    train(model, ds, epochs=args.epochs, lr=args.lr, ds_eval=ds_eval)
 
     # Save model
     torch.save({
@@ -667,18 +716,20 @@ def main():
     }, args.model)
     print(f"Model saved -> {args.model}")
 
-    # Generate full profile
+    # Generate full profile.
+    # orig_samples = all measured samples (train + eval) so every measured note
+    # is preserved verbatim in the output; only truly missing notes use NN prediction.
     print("Generating full parameter profile ...")
-    orig = None if args.no_preserve_orig else samples
+    orig = None if args.no_preserve_orig else measured
     profile_samples = generate_profile(
         model, ds,
         midi_from=args.midi_from, midi_to=args.midi_to,
         sr=args.sr, orig_samples=orig,
     )
 
-    n_nn    = sum(1 for s in profile_samples.values() if s.get("_from_profile"))
-    n_orig  = sum(1 for s in profile_samples.values() if not s.get("_from_profile"))
-    print(f"  NN-generated: {n_nn}  |  Preserved originals: {n_orig}")
+    n_nn   = sum(1 for s in profile_samples.values() if s.get("_interpolated"))
+    n_orig = sum(1 for s in profile_samples.values() if not s.get("_interpolated"))
+    print(f"  NN-interpolated: {n_nn}  |  Measured originals: {n_orig}")
 
     out_data = dict(raw, samples=profile_samples)
     Path(args.out).write_text(json.dumps(out_data, indent=2, ensure_ascii=False))

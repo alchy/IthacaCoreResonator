@@ -24,7 +24,7 @@ static const std::vector<uint16_t> kRWParamIds = {
     PID_PITCH_GLIDE, PID_PITCH_GLIDE_TAU_MS, PID_PITCH_GLIDE_VEL_THRESH,
     // 0x5 LEVEL/ENV
     PID_TARGET_RMS, PID_VEL_GAMMA, PID_NOISE_LEVEL,
-    PID_ONSET_MS, PID_LONGITUDINAL_PRECURSOR,
+    PID_ONSET_MS, PID_LONGITUDINAL_PRECURSOR, PID_RENDER_REF_DURATION,
 };
 
 const std::vector<uint16_t>& sysexRWParamIds() { return kRWParamIds; }
@@ -65,6 +65,7 @@ bool sysexReadParam(uint16_t id, const SynthConfig& c, float& v) {
         case PID_NOISE_LEVEL:            v = c.noise_level;              return true;
         case PID_ONSET_MS:               v = c.onset_ms;                 return true;
         case PID_LONGITUDINAL_PRECURSOR: v = c.longitudinal_precursor;   return true;
+        case PID_RENDER_REF_DURATION:    v = c.render_ref_duration_s;   return true;
         default: return false;
     }
 }
@@ -96,6 +97,7 @@ bool sysexApplyParam(uint16_t id, float v, ResonatorVoiceManager& vm) {
         case PID_NOISE_LEVEL:            vm.setSynthNoiseLevel(clamp(v,0.f,4.f));           return true;
         case PID_ONSET_MS:               vm.setSynthOnsetMs(clamp(v,0.f,50.f));             return true;
         case PID_LONGITUDINAL_PRECURSOR: vm.setSynthLongitudinalPrecursor(clamp(v,0.f,1.f));return true;
+        case PID_RENDER_REF_DURATION:    vm.setSynthRenderRefDuration(clamp(v,0.1f,60.f));  return true;
         default: return false;
     }
 }

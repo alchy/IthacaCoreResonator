@@ -68,11 +68,12 @@ static void computeStringAngles(int midi, int n_strings, float pan_spread,
 void ResonatorVoice::noteOn(int midi, int vel,
                              const NoteParams& p, float sample_rate,
                              const SynthConfig& cfg) {
-    // Velocity gain: (vel/127)^vel_gamma  (Python: rms ∝ ((vel+1)/8)^vel_gamma)
-    // Provides smooth amplitude response across all 128 MIDI velocities.
-    const float vel_gain = (vel > 0)
-        ? std::pow((float)vel / 127.f, cfg.vel_gamma)
-        : 0.f;
+    // Velocity gain: ((vel+1)/8)^vel_gamma — matches Python synthesize_note().
+    // Range: vel=0 → (1/8)^0.7≈0.16 (pp), vel=127 → (128/8)^0.7≈7.0 (fff).
+    // MIDI vel=0 is treated as note-off upstream; guard kept for safety.
+    const float vel_gain = (vel <= 0)
+        ? 0.f
+        : std::pow((float)(vel + 1) / 8.f, cfg.vel_gamma);
 
     midi_        = midi;
     sample_rate_ = sample_rate;
@@ -117,26 +118,33 @@ void ResonatorVoice::noteOn(int midi, int vel,
         in_onset_   = (onset_n > 1);
     }
 
-    // ── A0_ref normalization + target_rms level calibration ─────────────────
-    // Python: amp = (A / A0_ref).  A0_ref = first nonzero partial's A0.
-    // This makes the synthesis dimensionless (all notes have similar raw levels).
-    // Then Python RMS-normalizes the full signal to target_rms.
-    // For RT C++: estimate instantaneous expected power at t=0 with random phases.
-    //   E[power(t=0)] = sum_k (A0_k/A0_ref)^2 / 2  (cos^2 with random phase)
-    //   → level_scale = target_rms * sqrt(2) / sqrt(sum_sq)
-    // vel_gain is then applied on top for velocity dynamics.
+    // ── A0_ref normalization + onset-based level calibration ────────────────
+    // For offline rendering, RMS is corrected post-render in OfflineRenderer.
+    // For live synthesis, onset-based normalization is used:
+    //
+    //   At t≈0: env_k = norm_k · level_scale  (both single- and bi-exp)
+    //   E[(L²+R²)/2]|t=0 = level_scale² · Σ_k norm_k² / (2·n_strings)
+    //   Setting = (target_rms · vel_gain)²:
+    //     level_scale = target_rms · vel_gain · sqrt(2·n_strings) / sqrt(Σ_k norm_k²)
+    //
+    // Why not time-average (tau-integral) formula here:
+    //   - For treble notes (τ<<3s): sum_tau → 0 → level_scale → ∞ → clips
+    //   - Inter-string phase cross-terms cause ±50% RMS variance per note
+    //   - Onset formula is deterministic and bounded for all notes
+    //   Treble notes naturally sustain shorter (physically correct for piano).
     float A0_ref = 1.f;
     for (int k = 0; k < n_partials_; k++)
         if (p.partials[k].A0 > 1e-10f) { A0_ref = p.partials[k].A0; break; }
     if (A0_ref < 1e-10f) A0_ref = 1.f;
 
-    float sum_sq = 0.f;
+    float sum_norm_sq = 0.f;
     for (int k = 0; k < n_partials_; k++) {
-        float norm = p.partials[k].A0 / A0_ref;
-        sum_sq += norm * norm;
+        const float norm = p.partials[k].A0 / A0_ref;
+        sum_norm_sq += norm * norm;
     }
-    const float level_scale = (sum_sq > 1e-10f)
-        ? (cfg.target_rms * std::sqrt(2.f) / std::sqrt(sum_sq) * vel_gain)
+    const float level_scale = (sum_norm_sq > 1e-10f)
+        ? (cfg.target_rms * vel_gain
+           * std::sqrt(2.f * (float)n_strings_) / std::sqrt(sum_norm_sq))
         : (cfg.target_rms * vel_gain);
 
     // ── Pre-compute per-partial state ────────────────────────────────────────
@@ -223,8 +231,11 @@ void ResonatorVoice::noteOn(int midi, int vel,
     float fc_noise   = std::min(p.noise.centroid_hz, sample_rate * 0.45f);
     noise_alpha_     = 1.f - std::exp(-TAU * fc_noise / sample_rate);
     noise_decay_     = std::exp(-1.f / (std::max(taun, 0.001f) * sample_rate));
-    // Noise uses same level_scale as partials (Python: A_noise gets same RMS scale).
-    noise_env_       = p.noise.floor_rms * cfg.noise_level * level_scale;
+    // Noise scales with target_rms * vel_gain only — NOT with level_scale.
+    // level_scale embeds a per-partial normalization (sqrt(2*n_strings)/sqrt(Σnorm²))
+    // that is wrong for noise (a fixed spectral floor, not an exponential partial).
+    // Python: A_noise is an absolute RMS value, not scaled by partial normalization.
+    noise_env_       = p.noise.floor_rms * cfg.noise_level * (cfg.target_rms * vel_gain);
     noise_state_l_   = 0.f;
     noise_state_r_   = 0.f;
 

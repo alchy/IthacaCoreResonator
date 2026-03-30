@@ -124,6 +124,14 @@ synth/offline_renderer.cpp  <-- render server only
 synth/render_server.cpp     <-- render server only
 ```
 
+### Level calibrace
+
+IthacaRenderServer normalizuje každý render post-hoc na `target_rms * vel_gain` — stejně jako
+Python `synthesize_note()`. Důvod: náhodné počáteční fáze stringů způsobují rozptyl ±50 % u not
+s málo parciály; post-normalizace to eliminuje a zaručuje konzistentní amplitudu trénovacích dat.
+
+Pro real-time syntézu (ICR/GUI) se používá analytická level_scale formule s `render_ref_duration_s`.
+
 ### Protokol (stdin/stdout JSON)
 
 Jeden JSON objekt per řádek. Server píše log na **stderr**, protokol na **stdout**.
@@ -197,7 +205,17 @@ python -u analysis/train_instrument_profile.py \
 Available measured samples: 603
 Dataset: B=576  tau=4735  tau1_k1=603  A0=31911  df=24272  eq=9648  noise=603  biexp=5433
 Model parameters: 90,189
-Final loss: 0.826 (log-space MSE)
+
+epoch  100/800  loss=1.019822  lr=2.89e-03
+epoch  200/800  loss=0.904562  lr=2.57e-03
+epoch  300/800  loss=0.866582  lr=2.08e-03
+epoch  400/800  loss=0.848845  lr=1.51e-03
+epoch  500/800  loss=0.836595  lr=9.47e-04
+epoch  600/800  loss=0.828756  lr=4.65e-04
+epoch  700/800  loss=0.825320  lr=1.43e-04
+epoch  800/800  loss=0.824400  lr=3.00e-05
+
+Final loss: 0.824 (log-space MSE)
 
 Output: 704 entries (603 originals preserved + 101 NN-generated)
 NN B range: 1.37e-4 – 1.70e-3 (fyzikálně správný rozsah)
@@ -220,8 +238,33 @@ Output: analysis/params-nn-profile-ks-grand.json
 3. `python analysis/find_outliers.py --params analysis/params-<banka>.json --z 10 --plot --feature B` — vizuální kontrola
 4. `python analysis/find_outliers.py --params analysis/params-<banka>.json --z 10 --drop`
 5. `python analysis/compute_spectral_eq.py --params analysis/params-<banka>.json --bank_dir ...`
-6. Test render: `python -c "from analysis.render_client import RenderClient; ..."`
-7. Swapni params v `server_main.cpp` default nebo předej jako argv
+6. Surrogate trénink:
+   ```bash
+   python -u analysis/train_instrument_profile.py \
+       --in  analysis/params-<banka>.json \
+       --out analysis/params-nn-profile-<banka>.json \
+       --model analysis/profile-<banka>.pt \
+       --epochs 800 --hidden 64 --lr 0.003
+   ```
+   Typická konvergenční křivka (ks-grand, 800 epoch, ~2 min na CPU):
+   ```
+   epoch  100: loss ≈ 1.02  epoch  400: loss ≈ 0.85
+   epoch  200: loss ≈ 0.90  epoch  800: loss ≈ 0.82 (final)
+   ```
+7. Test render (ověří level calibraci):
+   ```python
+   from analysis.render_client import RenderClient
+   import scipy.io.wavfile as wf, numpy as np, math
+   with RenderClient("build/bin/Release/IthacaRenderServer.exe",
+                     "analysis/params-nn-profile-<banka>.json") as rc:
+       rc.render(midi=60, vel=80, output="/tmp/test.wav", duration=3.0)
+   sr, d = wf.read("/tmp/test.wav")
+   rms = math.sqrt((np.mean(d[:,0]**2) + np.mean(d[:,1]**2)) / 2)
+   expected = 0.06 * (80/127)**0.7
+   print(f"rms={rms:.5f}  expected={expected:.5f}  ratio={rms/expected:.4f}")
+   # ratio by měl být 1.0000 (post-render normalizace garantuje)
+   ```
+8. Swapni params v `server_main.cpp` default nebo předej jako argv
 
 ---
 
@@ -234,7 +277,10 @@ Output: analysis/params-nn-profile-ks-grand.json
 | `analysis/compute_spectral_eq.py` | LTASE EQ křivka |
 | `analysis/render_client.py` | Python wrapper pro render server |
 | `analysis/physics_synth.py` | Python reference implementace fyziky |
-| `synth/offline_renderer.h/.cpp` | Headless C++ renderer |
+| `synth/offline_renderer.h/.cpp` | Headless C++ renderer (s post-render RMS normalizací) |
 | `synth/render_server.h/.cpp` | stdin/stdout JSON server |
 | `server_main.cpp` | Render server entry point |
-| `analysis/params-ks-grand.json` | Aktuální banka (603 samplov po filtru) |
+| `analysis/train_instrument_profile.py` | Surrogate NN trénink |
+| `analysis/params-ks-grand.json` | Naměřená banka (603 samplov po filtru) |
+| `analysis/params-nn-profile-ks-grand.json` | NN-smoothed profil (704 pozic) |
+| `analysis/profile.pt` | Natrénovaný surrogate model |

@@ -182,3 +182,10 @@ Stdout je vyhrazen výhradně pro JSON protokol.
   aby `cfg_` odpovídal stavu `vm_` a `get_config` vrátil aktuální hodnoty.
 - **Sdílený DSP kód**: `RENDER_SYNTH_SOURCES` ⊂ `SYNTH_SOURCES` v `CMakeLists.txt`.
   Změna enginu se propaguje do všech targetů při buildu.
+- **Post-render RMS normalizace**: `OfflineRenderer::renderNote()` po celkovém renderu
+  přepočítá skutečný RMS a normalizuje výstup na `target_rms * vel_gain` — stejný postup jako
+  Python `synthesize_note()`. Opravuje inter-string fázové cross-termy (náhodné počáteční fáze
+  způsobují rozptyl ±50 % u not s málo parciály). Výsledný RMS je vždy přesně `target_rms * vel_gain`.
+- **`render_ref_duration_s`** (SynthConfig, SysEx ID 0x5005): referenční délka pro level_scale
+  formuli v real-time syntéze. Pro IthacaRenderServer nemá vliv na výstupní úroveň (post-normalizace).
+  Výchozí 3.0 s odpovídá Python `render(duration=3.0)`.

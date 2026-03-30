@@ -45,9 +45,9 @@ Všechny bajty v SysEx musí být ≤ 0x7F (7-bit MIDI data).
 | 0x01 | SET_PARAM        | Host → ICR | 15 bajtů   |
 | 0x02 | GET_PARAM        | Host → ICR | 9 bajtů    |
 | 0x03 | PARAM_RESPONSE   | ICR → Host | 15 bajtů   |
-| 0x04 | SET_ALL          | Host → ICR | 159 bajtů  |
+| 0x04 | SET_ALL          | Host → ICR | 167 bajtů  |
 | 0x05 | REQUEST_ALL      | Host → ICR | 7 bajtů    |
-| 0x06 | ALL_PARAMS_DUMP  | ICR → Host | 159 bajtů  |
+| 0x06 | ALL_PARAMS_DUMP  | ICR → Host | 167 bajtů  |
 
 ### SET_PARAM (15 bajtů)
 
@@ -83,13 +83,13 @@ F0  7D  49 43 52  02  [id0] [id1] [id2]  F7
 
 ICR odpoví PARAM_RESPONSE se stejným kódováním.
 
-### SET_ALL / ALL_PARAMS_DUMP (159 bajtů)
+### SET_ALL / ALL_PARAMS_DUMP (167 bajtů)
 
-Záhlaví (6 B) + 19 param bloků × 8 B (3 B ID + 5 B hodnota) + F7 (1 B).
+Záhlaví (6 B) + 20 param bloků × 8 B (3 B ID + 5 B hodnota) + F7 (1 B).
 
 ```
 F0  7D  49 43 52  04/06
-    [id0 id1 id2 v0 v1 v2 v3 v4]  × 19
+    [id0 id1 id2 v0 v1 v2 v3 v4]  × 20
 F7
 ```
 
@@ -132,9 +132,15 @@ Pořadí bloků je fixní (viz tabulka níže, shora dolů).
 | 0x5002 | `PID_NOISE_LEVEL`            | `noise_level`               | 1.000   | 0.00  | 4.00 |
 | 0x5003 | `PID_ONSET_MS`               | `onset_ms`                  | 3.00    | 0.00  | 50.0 |
 | 0x5004 | `PID_LONGITUDINAL_PRECURSOR` | `longitudinal_precursor`    | 0.000   | 0.00  | 1.00 |
+| 0x5005 | `PID_RENDER_REF_DURATION`    | `render_ref_duration_s`     | 3.000   | 0.10  | 60.0 |
 
-**Celkem R/W parametrů:** 19
-**SET_ALL / ALL_PARAMS_DUMP:** 159 bajtů
+Poznámka k `render_ref_duration_s`: referenční délka (v sekundách) použitá v level_scale formuli
+pro real-time syntézu. Musí odpovídat délce render volání v tréninkovém pipeline (default 3.0 s).
+Pro offline rendering (IthacaRenderServer) je výsledek normalizován post-render — hodnota ovlivňuje
+pouze live playback.
+
+**Celkem R/W parametrů:** 20
+**SET_ALL / ALL_PARAMS_DUMP:** 167 bajtů
 
 ---
 
@@ -286,4 +292,4 @@ ICR log:
 [WRN][SYSEX] Invalid SysEx (10 bytes) — ignored   × 1   — bad signature test OK
 ```
 
-Codec round-trip: **19 params + 20 random floats — vše OK**.
+Codec round-trip: **20 params + 20 random floats — vše OK**.

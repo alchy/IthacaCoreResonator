@@ -70,6 +70,7 @@ static constexpr uint16_t PID_VEL_GAMMA            = 0x5001;
 static constexpr uint16_t PID_NOISE_LEVEL          = 0x5002;
 static constexpr uint16_t PID_ONSET_MS             = 0x5003;
 static constexpr uint16_t PID_LONGITUDINAL_PRECURSOR= 0x5004;
+static constexpr uint16_t PID_RENDER_REF_DURATION   = 0x5005;
 
 // ── Codec helpers ─────────────────────────────────────────────────────────────
 

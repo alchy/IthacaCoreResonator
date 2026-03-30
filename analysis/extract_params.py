@@ -245,10 +245,15 @@ def partial_envelope_from_stft(times: np.ndarray, freqs: np.ndarray, mag: np.nda
     lo = max(0, target_bin - search_bins)
     hi = min(mag.shape[1] - 1, target_bin + search_bins)
 
-    amps = mag[:, lo: hi + 1].max(axis=1).astype(np.float64)
+    # Gaussian-weighted centroid across search bins — suppresses leakage from
+    # adjacent harmonics (a concern when bin_width approaches harmonic spacing).
+    bins = np.arange(lo, hi + 1, dtype=np.float32)
+    sigma = max(1.0, (hi - lo) / 2.0)
+    weights = np.exp(-0.5 * ((bins - target_bin) / sigma) ** 2)
+    weights /= weights.sum() + 1e-12
+    amps = (mag[:, lo: hi + 1] * weights[np.newaxis, :]).sum(axis=1).astype(np.float64)
 
     # Gate out frames below 0.1% of peak (silence)
-    threshold = amps.max() * 0.001
     if amps.max() < 1e-12:
         return np.array([]), np.array([])
 
@@ -412,9 +417,13 @@ def analyze_noise(audio: np.ndarray, sr: int,
                   peaks: list[dict], f0: float, B: float) -> dict:
     """
     Estimate noise model by analyzing early attack residual after harmonic subtraction.
-    Returns {'attack_tau_s', 'floor_rms', 'centroid_hz', 'spectral_slope_db_oct'}.
+    Returns {'attack_tau_s', 'A_noise', 'centroid_hz', 'spectral_slope_db_oct'}.
+
+    A_noise: peak RMS of the noise burst (at attack onset, not the last decayed frame).
+    centroid_hz: spectral centroid of the residual (after harmonic subtraction),
+                 avoiding contamination from string partials still present at t=0.1s.
     """
-    result = {'attack_tau_s': 0.05, 'floor_rms': 0.001,
+    result = {'attack_tau_s': 0.05, 'A_noise': 0.001,
               'centroid_hz': 2000.0, 'spectral_slope_db_oct': -3.0}
 
     if len(audio) < sr * 0.1:
@@ -423,22 +432,25 @@ def analyze_noise(audio: np.ndarray, sr: int,
     # Attack window: first 200ms
     attack = audio[:int(0.2 * sr)].copy()
 
-    # Subtract top harmonics from attack
+    # Subtract top harmonics from attack using least-squares amplitude fitting.
+    # Unit-cosine basis → solve for amplitude per partial to minimise residual energy.
     n = len(attack)
     t_vec = np.arange(n) / sr
 
-    # Build harmonic signal from peak parameters
-    harmonic = np.zeros(n, dtype=np.float32)
-    A_scale = max(np.abs(attack).max(), 1e-10)
+    basis = []
     for p in peaks[:30]:  # top 30 partials
         fk = inharmonic_freq(p['k'], f0, B)
         if fk < sr / 2 * 0.95:
-            # Amplitude from spectrum is not calibrated to waveform; use scaled version
-            harmonic += np.cos(2 * np.pi * fk * t_vec).astype(np.float32)
+            basis.append(np.cos(2 * np.pi * fk * t_vec).astype(np.float32))
 
-    # Normalize harmonic and subtract
-    h_scale = np.std(harmonic) + 1e-10
-    harmonic = harmonic / h_scale * np.std(attack) * 0.8
+    if basis:
+        H = np.column_stack(basis)          # (n, n_basis)
+        # Least-squares fit: min ||attack - H @ c||^2
+        c, _, _, _ = np.linalg.lstsq(H, attack, rcond=None)
+        harmonic = (H @ c).astype(np.float32)
+    else:
+        harmonic = np.zeros(n, dtype=np.float32)
+
     residual = attack - harmonic
 
     # Attack noise decay (RMS envelope of residual)
@@ -453,6 +465,10 @@ def analyze_noise(audio: np.ndarray, sr: int,
 
     if len(rms_env) >= 6:
         i_peak = rms_env.argmax()
+        # A_noise: peak noise burst amplitude (not the last decayed frame).
+        # This correctly represents the hammer-impact noise level at onset.
+        result['A_noise'] = float(rms_env[i_peak])
+
         t_dec = t_rms[i_peak:] - t_rms[i_peak]
         a_dec = rms_env[i_peak:]
         if len(t_dec) >= 4 and a_dec[0] > 1e-10:
@@ -465,26 +481,21 @@ def analyze_noise(audio: np.ndarray, sr: int,
                 result['attack_tau_s'] = float(popt[0])
             except Exception:
                 pass
-        result['floor_rms'] = float(rms_env[-1])
 
-    # Spectral centroid and slope of noise (from later in the note to avoid hammer)
-    i_late = min(int(0.1 * sr), len(audio) - frame)
-    if i_late >= 0:
-        noise_segment = audio[i_late: i_late + frame]
+    # Spectral centroid from residual (harmonics removed) — avoids harmonic contamination.
+    noise_for_centroid = residual if len(residual) >= frame else residual
+    if len(noise_for_centroid) >= frame // 2:
         try:
-            f_w, psd = welch(noise_segment, fs=sr, nperseg=frame // 2)
+            f_w, psd = welch(noise_for_centroid[:frame], fs=sr, nperseg=frame // 2)
             if psd.sum() > 0:
-                # Centroid
                 centroid = float(np.sum(f_w * psd) / psd.sum())
                 result['centroid_hz'] = centroid
 
-                # Spectral slope (linear regression on log-log scale, 200Hz–8kHz)
                 mask = (f_w >= 200) & (f_w <= 8000)
                 if mask.sum() >= 4:
                     log_f = np.log2(f_w[mask] + 1)
                     log_p = np.log10(psd[mask] + 1e-30)
                     coeffs = np.polyfit(log_f, log_p, 1)
-                    # slope in dB/octave ≈ 10 * polyfit_slope
                     result['spectral_slope_db_oct'] = float(coeffs[0] * 10)
         except Exception:
             pass

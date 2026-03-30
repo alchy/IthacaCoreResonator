@@ -47,11 +47,16 @@ struct SynthConfig {
 
     // ── Level ─────────────────────────────────────────────────────────────────
     // Target RMS for each synthesized note (matches Python target_rms=0.06).
-    // Implemented via A0_ref normalization + instantaneous RMS estimate at t=0.
-    float target_rms  = 0.06f;   // −24.4 dBFS RMS; Python default
+    // Implemented via A0_ref normalization + exact tau-integral energy formula.
+    float target_rms             = 0.06f;   // −24.4 dBFS RMS; Python default
+    // Reference render duration used in the level calibration formula.
+    // Must match the duration used when generating training data (Python default=3.0s).
+    // p.duration_s (recording length) must NOT be used here — it varies per sample.
+    float render_ref_duration_s  = 3.0f;    // seconds; matches Python render(duration=3.0)
 
     // ── Velocity ──────────────────────────────────────────────────────────────
-    // vel_gain = (midi_vel / 127)^vel_gamma  applied to all partial amplitudes.
-    // 0.7 matches Python synthesize_preview_set(vel_gamma=0.7).
+    // vel_gain = ((midi_vel + 1) / 8)^vel_gamma  — matches Python synthesize_note().
+    // Range: vel=1 → ~0.16 (ppp), vel=64 → ~2.1 (mf), vel=127 → ~7.0 (fff).
+    // Applied as multiplier on target_rms for both partials and noise.
     float vel_gamma           = 0.7f;
 };

@@ -138,9 +138,10 @@ public:
     void setSynthPitchGlide           (float v) noexcept { synth_cfg_.pitch_glide            = v; }
     void setSynthPitchGlideTauMs      (float v) noexcept { synth_cfg_.pitch_glide_tau_ms     = v; }
     void setSynthPitchGlideVelThresh  (int   v) noexcept { synth_cfg_.pitch_glide_vel_thresh = v; }
-    void setSynthLongitudinalPrecursor(float v) noexcept { synth_cfg_.longitudinal_precursor = v; }
-    void setSynthTargetRms            (float v) noexcept { synth_cfg_.target_rms             = v; }
-    void setSynthVelGamma             (float v) noexcept { synth_cfg_.vel_gamma              = v; }
+    void setSynthLongitudinalPrecursor(float v) noexcept { synth_cfg_.longitudinal_precursor  = v; }
+    void setSynthTargetRms            (float v) noexcept { synth_cfg_.target_rms              = v; }
+    void setSynthRenderRefDuration    (float v) noexcept { synth_cfg_.render_ref_duration_s   = v; }
+    void setSynthVelGamma             (float v) noexcept { synth_cfg_.vel_gamma               = v; }
 
     float getSynthPanSpread()             const noexcept { return synth_cfg_.pan_spread;             }
     float getSynthPanTilt()               const noexcept { return synth_cfg_.pan_tilt;               }
@@ -211,9 +212,12 @@ private:
     SynthConfig synth_cfg_;
 
     // Limiter state cache (for getters, since DspChain stubs don't store values yet)
-    uint8_t limiter_threshold_midi_ = 127;
-    uint8_t limiter_release_midi_   = 64;
-    uint8_t limiter_enabled_midi_   = 0;
+    // Defaults: enabled, threshold -3 dB (MIDI 118), release 500 ms (MIDI 31).
+    // midiToDb: db = -40 + 40*(midi/127)  → MIDI 118 ≈ -2.9 dB
+    // midiToMs: ms = 10 + 1990*(midi/127) → MIDI 31  ≈ 496 ms
+    uint8_t limiter_threshold_midi_ = 118;
+    uint8_t limiter_release_midi_   = 31;
+    uint8_t limiter_enabled_midi_   = 64;   // >= 64 → enabled
 
     // BBE state cache
     uint8_t bbe_definition_midi_    = 0;
