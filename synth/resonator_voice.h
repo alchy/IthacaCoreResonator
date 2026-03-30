@@ -77,6 +77,17 @@ private:
     float ap_g_r_      = 0.f;
     float ap_strength_ = 0.f;
 
+    // ── Pitch glide state ─────────────────────────────────────────────────────
+    float pitch_glide_env_   = 0.f;  // current fractional freq offset (decays to 0)
+    float pitch_glide_decay_ = 1.f;  // per-sample decay multiplier
+
+    // ── Longitudinal precursor (bass only, MIDI < 50) ─────────────────────────
+    float precursor_env_     = 0.f;  // current precursor burst amplitude
+    float precursor_decay_   = 1.f;  // per-sample envelope decay
+    float precursor_alpha_   = 0.5f; // 1-pole LP coefficient (high-pass spectrum)
+    float precursor_state_l_ = 0.f;
+    float precursor_state_r_ = 0.f;
+
     // ── Onset ramp (prevents click at note start) ─────────────────────────────
     float onset_gain_  = 1.f;   // current ramp gain (0→1 over onset_ms)
     float onset_step_  = 0.f;   // per-sample increment

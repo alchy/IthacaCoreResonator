@@ -47,8 +47,9 @@ static const float STRING_SIGNS[3][3] = {
 // ── Dynamic string pan angles (Python _string_angles) ────────────────────────
 // center = π/4 + (midi-64.5)/87 * 0.20   (bass=left, treble=right)
 // half   = pan_spread/2
-static void computeStringAngles(int midi, int n_strings, float pan_spread, float* angles) {
-    float center = PI/4.f + ((float)midi - 64.5f) / 87.f * 0.20f;
+static void computeStringAngles(int midi, int n_strings, float pan_spread,
+                                 float pan_tilt, float* angles) {
+    float center = PI/4.f + ((float)midi - 64.5f) / 87.f * pan_tilt;
     float half   = pan_spread * 0.5f;
     if (n_strings == 1) {
         angles[0] = center;
@@ -67,11 +68,12 @@ static void computeStringAngles(int midi, int n_strings, float pan_spread, float
 void ResonatorVoice::noteOn(int midi, int vel,
                              const NoteParams& p, float sample_rate,
                              const SynthConfig& cfg) {
-    // Velocity gain: (vel/127)^vel_gamma  (Python: rms ∝ ((vel+1)/8)^vel_gamma)
-    // Provides smooth amplitude response across all 128 MIDI velocities.
-    const float vel_gain = (vel > 0)
-        ? std::pow((float)vel / 127.f, cfg.vel_gamma)
-        : 0.f;
+    // Velocity gain: ((vel+1)/8)^vel_gamma — matches Python synthesize_note().
+    // Range: vel=0 → (1/8)^0.7≈0.16 (pp), vel=127 → (128/8)^0.7≈7.0 (fff).
+    // MIDI vel=0 is treated as note-off upstream; guard kept for safety.
+    const float vel_gain = (vel <= 0)
+        ? 0.f
+        : std::pow((float)(vel + 1) / 8.f, cfg.vel_gamma);
 
     midi_        = midi;
     sample_rate_ = sample_rate;
@@ -89,7 +91,7 @@ void ResonatorVoice::noteOn(int midi, int vel,
     // ── Per-string pan: MIDI-dependent center tilt + pan_spread from config ──
     {
         float angles[MAX_STRINGS] = {};
-        computeStringAngles(midi, n_strings_, cfg.pan_spread, angles);
+        computeStringAngles(midi, n_strings_, cfg.pan_spread, cfg.pan_tilt, angles);
         for (int s = 0; s < n_strings_; s++) {
             pan_l_[s] = std::cos(angles[s]);
             pan_r_[s] = std::sin(angles[s]);
@@ -97,10 +99,11 @@ void ResonatorVoice::noteOn(int midi, int vel,
     }
 
     // ── Schroeder all-pass decorrelation coefficients ─────────────────────────
-    // Python: decor_strength = min(1,(midi-40)/60)*0.45 * stereo_decorr
+    // Python: decor_strength = min(1,(midi-lo)/(hi-lo)) * decorr_max * stereo_decorr
     {
-        float ds = std::min(1.f, std::max(0.f, ((float)midi - 40.f) / 60.f))
-                   * 0.45f * cfg.stereo_decorr;
+        float range = std::max(1.f, cfg.stereo_decorr_midi_hi - cfg.stereo_decorr_midi_lo);
+        float ds = std::min(1.f, std::max(0.f, ((float)midi - cfg.stereo_decorr_midi_lo) / range))
+                   * cfg.stereo_decorr_max * cfg.stereo_decorr;
         ap_g_l_      =  0.35f + ds * 0.25f;
         ap_g_r_      = -(0.35f + ds * 0.20f);
         ap_strength_ =  ds;
@@ -115,26 +118,33 @@ void ResonatorVoice::noteOn(int midi, int vel,
         in_onset_   = (onset_n > 1);
     }
 
-    // ── A0_ref normalization + target_rms level calibration ─────────────────
-    // Python: amp = (A / A0_ref).  A0_ref = first nonzero partial's A0.
-    // This makes the synthesis dimensionless (all notes have similar raw levels).
-    // Then Python RMS-normalizes the full signal to target_rms.
-    // For RT C++: estimate instantaneous expected power at t=0 with random phases.
-    //   E[power(t=0)] = sum_k (A0_k/A0_ref)^2 / 2  (cos^2 with random phase)
-    //   → level_scale = target_rms * sqrt(2) / sqrt(sum_sq)
-    // vel_gain is then applied on top for velocity dynamics.
+    // ── A0_ref normalization + onset-based level calibration ────────────────
+    // For offline rendering, RMS is corrected post-render in OfflineRenderer.
+    // For live synthesis, onset-based normalization is used:
+    //
+    //   At t≈0: env_k = norm_k · level_scale  (both single- and bi-exp)
+    //   E[(L²+R²)/2]|t=0 = level_scale² · Σ_k norm_k² / (2·n_strings)
+    //   Setting = (target_rms · vel_gain)²:
+    //     level_scale = target_rms · vel_gain · sqrt(2·n_strings) / sqrt(Σ_k norm_k²)
+    //
+    // Why not time-average (tau-integral) formula here:
+    //   - For treble notes (τ<<3s): sum_tau → 0 → level_scale → ∞ → clips
+    //   - Inter-string phase cross-terms cause ±50% RMS variance per note
+    //   - Onset formula is deterministic and bounded for all notes
+    //   Treble notes naturally sustain shorter (physically correct for piano).
     float A0_ref = 1.f;
     for (int k = 0; k < n_partials_; k++)
         if (p.partials[k].A0 > 1e-10f) { A0_ref = p.partials[k].A0; break; }
     if (A0_ref < 1e-10f) A0_ref = 1.f;
 
-    float sum_sq = 0.f;
+    float sum_norm_sq = 0.f;
     for (int k = 0; k < n_partials_; k++) {
-        float norm = p.partials[k].A0 / A0_ref;
-        sum_sq += norm * norm;
+        const float norm = p.partials[k].A0 / A0_ref;
+        sum_norm_sq += norm * norm;
     }
-    const float level_scale = (sum_sq > 1e-10f)
-        ? (cfg.target_rms * std::sqrt(2.f) / std::sqrt(sum_sq) * vel_gain)
+    const float level_scale = (sum_norm_sq > 1e-10f)
+        ? (cfg.target_rms * vel_gain
+           * std::sqrt(2.f * (float)n_strings_) / std::sqrt(sum_norm_sq))
         : (cfg.target_rms * vel_gain);
 
     // ── Pre-compute per-partial state ────────────────────────────────────────
@@ -182,6 +192,34 @@ void ResonatorVoice::noteOn(int midi, int vel,
         }
     }
 
+    // ── Pitch glide ───────────────────────────────────────────────────────────
+    // Geometric nonlinearity: at forte, f₀ starts slightly sharp and glides down.
+    if (cfg.pitch_glide != 0.f && vel >= cfg.pitch_glide_vel_thresh) {
+        pitch_glide_env_   = cfg.pitch_glide;
+        pitch_glide_decay_ = std::exp(-1.f / (std::max(cfg.pitch_glide_tau_ms, 1.f)
+                                              * 0.001f * sample_rate));
+    } else {
+        pitch_glide_env_   = 0.f;
+        pitch_glide_decay_ = 1.f;
+    }
+
+    // ── Longitudinal precursor (bass only: MIDI < 50) ─────────────────────────
+    // Short high-frequency noise burst — longitudinal wave arrives before transverse.
+    // Duration ≈ 2 string cycles (≈ 2/f₀), capped at 10 ms.
+    if (midi < 50 && cfg.longitudinal_precursor > 0.f) {
+        float f0 = (p.n_partials > 0 && p.partials[0].f_hz > 0.f)
+                   ? p.partials[0].f_hz : p.f0_hz;
+        float dur_s        = std::min(0.010f, 2.f / std::max(f0, 20.f));
+        precursor_env_     = cfg.longitudinal_precursor * level_scale;
+        precursor_decay_   = std::exp(-1.f / (dur_s * sample_rate));
+        // Spectrum: concentrated around 2–4× f₀ (longitudinal modes)
+        float fc_prec      = std::min(4.f * f0, sample_rate * 0.45f);
+        precursor_alpha_   = 1.f - std::exp(-TAU * fc_prec / sample_rate);
+        precursor_state_l_ = precursor_state_r_ = 0.f;
+    } else {
+        precursor_env_ = 0.f;
+    }
+
     // ── Noise state ───────────────────────────────────────────────────────────
     // tau cap: noise never outlasts the string fundamental (Python: taun = min(taun, tau1_k1))
     float tau1_k1 = 3.f;
@@ -193,8 +231,11 @@ void ResonatorVoice::noteOn(int midi, int vel,
     float fc_noise   = std::min(p.noise.centroid_hz, sample_rate * 0.45f);
     noise_alpha_     = 1.f - std::exp(-TAU * fc_noise / sample_rate);
     noise_decay_     = std::exp(-1.f / (std::max(taun, 0.001f) * sample_rate));
-    // Noise uses same level_scale as partials (Python: A_noise gets same RMS scale).
-    noise_env_       = p.noise.floor_rms * cfg.noise_level * level_scale;
+    // A_noise (floor_rms) is a dimensionless ratio: noise_rms / signal_onset_rms.
+    // Multiplying by (target_rms * vel_gain) preserves the recording's noise/signal
+    // ratio at the synthesis output level.  level_scale must NOT be used here —
+    // it contains partial normalization irrelevant to noise and would cause [WAV]^2 error.
+    noise_env_       = p.noise.floor_rms * cfg.noise_level * (cfg.target_rms * vel_gain);
     noise_state_l_   = 0.f;
     noise_state_r_   = 0.f;
 
@@ -237,6 +278,11 @@ void ResonatorVoice::processBlock(float* out_l, float* out_r, int n_samples) {
     for (int s = 0; s < n; s++) {
         float l = 0.f, r = 0.f;
 
+        // ── Pitch glide: fractional frequency offset decaying to 0 ───────────
+        // f_k(t) = f_k · (1 + pitch_glide_env)  — applied via phase increment
+        const float pitch_mod = 1.f + pitch_glide_env_;
+        pitch_glide_env_ *= pitch_glide_decay_;
+
         // ── Oscillator sum (normalised by n_strings) ──────────────────────────
         for (int k = 0; k < n_partials_; k++) {
             env1_[k] *= d1_[k];
@@ -244,12 +290,23 @@ void ResonatorVoice::processBlock(float* out_l, float* out_r, int n_samples) {
             float env = env1_[k] + env2_[k];
 
             for (int str = 0; str < n_strings_; str++) {
-                phase_[k][str] += omega_[k][str];
+                phase_[k][str] += omega_[k][str] * pitch_mod;
                 if (phase_[k][str] > TAU) phase_[k][str] -= TAU;
                 float sig = env * std::cos(phase_[k][str]) * str_norm_;
                 l += sig * pan_l_[str];
                 r += sig * pan_r_[str];
             }
+        }
+
+        // ── Longitudinal precursor burst (bass notes, decays in ~2–10 ms) ────
+        if (precursor_env_ > 1e-9f) {
+            float wl = 2.f * (float)std::rand() / (float)RAND_MAX - 1.f;
+            float wr = 2.f * (float)std::rand() / (float)RAND_MAX - 1.f;
+            precursor_state_l_ = precursor_alpha_ * wl + (1.f - precursor_alpha_) * precursor_state_l_;
+            precursor_state_r_ = precursor_alpha_ * wr + (1.f - precursor_alpha_) * precursor_state_r_;
+            l += precursor_state_l_ * precursor_env_;
+            r += precursor_state_r_ * precursor_env_;
+            precursor_env_ *= precursor_decay_;
         }
 
         // ── Noise: independent L and R channels (Python: separate per buf) ────

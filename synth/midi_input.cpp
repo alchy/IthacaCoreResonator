@@ -13,9 +13,10 @@
  */
 
 #include "midi_input.h"
-#include <iostream>
+#include "sysex.h"
 #include <stdexcept>
 #include <chrono>
+#include <cstdio>
 
 static uint64_t nowMs() {
     return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -45,7 +46,8 @@ bool MidiInput::open(ResonatorEngine& engine, int port_index) {
 
         unsigned int n = midi_->getPortCount();
         if (n == 0) {
-            std::cout << "[MIDI] No input ports found — keyboard fallback active\n";
+            engine.getLogger().log("MIDI", LogSeverity::Info,
+                                   "No input ports found — keyboard fallback active");
             delete midi_; midi_ = nullptr;
             return false;
         }
@@ -53,12 +55,12 @@ bool MidiInput::open(ResonatorEngine& engine, int port_index) {
         int idx = (port_index < 0 || port_index >= (int)n) ? 0 : port_index;
         port_name_ = midi_->getPortName(idx);
         midi_->openPort(idx);
-        midi_->ignoreTypes(true, true, true);  // ignore sysex, timing, active sensing
+        midi_->ignoreTypes(false, true, true);  // allow sysex; ignore timing, active sensing
         midi_->setCallback(&MidiInput::callback, this);
-        std::cout << "[MIDI] Opened: " << port_name_ << "\n";
+        engine.getLogger().log("MIDI", LogSeverity::Info, "Opened: " + port_name_);
         return true;
     } catch (RtMidiError& e) {
-        std::cerr << "[MIDI] Error: " << e.getMessage() << "\n";
+        engine.getLogger().log("MIDI", LogSeverity::Error, e.getMessage());
         delete midi_; midi_ = nullptr;
         return false;
     }
@@ -70,13 +72,14 @@ bool MidiInput::openVirtual(ResonatorEngine& engine, const std::string& name) {
         midi_   = new RtMidiIn();
         engine_ = &engine;
         midi_->openVirtualPort(name);
-        midi_->ignoreTypes(true, true, true);
+        midi_->ignoreTypes(false, true, true);
         midi_->setCallback(&MidiInput::callback, this);
         port_name_ = name + " (virtual)";
-        std::cout << "[MIDI] Virtual port: " << name << "\n";
+        engine.getLogger().log("MIDI", LogSeverity::Info, "Virtual port: " + name);
         return true;
     } catch (RtMidiError& e) {
-        std::cerr << "[MIDI] Virtual port error: " << e.getMessage() << "\n";
+        engine.getLogger().log("MIDI", LogSeverity::Error,
+                               "Virtual port error: " + e.getMessage());
         delete midi_; midi_ = nullptr;
         return false;
     }
@@ -106,6 +109,32 @@ void MidiInput::callback(double /*ts*/,
 
     uint64_t t = nowMs();
     self->activity_.any_ms.store(t, std::memory_order_relaxed);
+
+    // SysEx (F0) — ICR parameter protocol
+    if (status == 0xF0) {
+        Logger& logger = self->engine_->getLogger();
+        if (!sysexValidate(*msg)) {
+            logger.log("SYSEX", LogSeverity::Warning,
+                "Invalid SysEx (" + std::to_string(msg->size()) + " bytes) — ignored");
+            return;
+        }
+        uint8_t sxtype = (*msg)[5];
+        char typebuf[16];
+        std::snprintf(typebuf, sizeof(typebuf), "0x%02X", sxtype);
+        bool ok = sysexApply(*msg, self->engine_->getVoiceManager());
+        if (ok)
+            self->activity_.sysex_ms.store(t, std::memory_order_relaxed);
+        if (ok) {
+            logger.log("SYSEX", LogSeverity::Info,
+                std::string("Applied type=") + typebuf +
+                " (" + std::to_string(msg->size()) + " bytes)");
+        } else {
+            logger.log("SYSEX", LogSeverity::Warning,
+                std::string("Unhandled type=") + typebuf +
+                " (" + std::to_string(msg->size()) + " bytes)");
+        }
+        return;
+    }
 
     switch (type) {
         case 0x90:  // Note On

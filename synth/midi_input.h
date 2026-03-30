@@ -18,6 +18,7 @@
 // 0 = never received.
 struct MidiActivity {
     std::atomic<uint64_t> any_ms     {0};  // any MIDI message
+    std::atomic<uint64_t> sysex_ms   {0};  // SysEx applied
     std::atomic<uint64_t> note_on_ms {0};  // Note On
     std::atomic<uint64_t> note_off_ms{0};  // Note Off
     std::atomic<uint64_t> pedal_ms   {0};  // CC 64 sustain pedal

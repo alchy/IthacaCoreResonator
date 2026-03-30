@@ -75,6 +75,8 @@ public:
     int  blockSize()    const { return block_size_; }
 
     // ── DSP chain access (for GUI metering / state readback) ──────────────────
+    ResonatorVoiceManager& getVoiceManager() { return vm_; }
+    Logger&                getLogger()       { return logger_; }
     DspChain*          getDspChain()      { return vm_.getDspChain(); }
     float              getOutputPeakLin() const { return vm_.getOutputPeakLin(); }
     const SynthConfig& getSynthConfig()   const { return vm_.getSynthConfig(); }
@@ -97,7 +99,7 @@ private:
     void processBlock(float* out_interleaved, uint32_t frame_count);
 
     ResonatorVoiceManager  vm_;
-    Logger*                logger_      = nullptr;
+    Logger                 logger_;               // silent by default; set in initialize()
     std::atomic<uint8_t>   last_note_midi_{60};
     std::atomic<uint8_t>   last_note_vel_ {80};
     ma_device*             device_      = nullptr;   // heap-allocated (opaque type)

@@ -98,9 +98,12 @@ struct GuiState {
 };
 
 // ── GLFW error callback ───────────────────────────────────────────────────────
-static void glfwErrorCb(int err, const char* desc) {
-    (void)err;
-    fprintf(stderr, "[GLFW] %s\n", desc);
+// GLFW doesn't support user-data on the error callback, so we keep a file-scope
+// pointer set at the start of runResonatorGui().
+static Logger* g_glfw_logger = nullptr;
+static void glfwErrorCb(int /*err*/, const char* desc) {
+    if (g_glfw_logger)
+        g_glfw_logger->log("GLFW", LogSeverity::Error, desc);
 }
 
 // ── Draw piano keyboard, return MIDI note under mouse (-1 if none) ────────────
@@ -203,6 +206,7 @@ static int drawPiano(GuiState& gs, ResonatorEngine& engine) {
 
 int runResonatorGui(ResonatorEngine& engine, Logger& logger,
                     const std::string& /*params_json_path*/) {
+    g_glfw_logger = &logger;
     logger.log("GUI", LogSeverity::Info, "Starting GLFW + ImGui");
 
     glfwSetErrorCallback(glfwErrorCb);
@@ -377,6 +381,8 @@ int runResonatorGui(ResonatorEngine& engine, Logger& logger,
             };
 
             midiLed("MIDI DATA",   act.any_ms.load(std::memory_order_relaxed));
+            ledSep();
+            midiLed("SysEx",       act.sysex_ms.load(std::memory_order_relaxed));
             ledSep();
             midiLed("Note ON",     act.note_on_ms.load(std::memory_order_relaxed));
             ledSep();

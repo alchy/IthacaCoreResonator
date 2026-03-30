@@ -138,12 +138,31 @@ Also cross-product combinations `f_i ± f_j` (stronger in bass/forte).
 ## Recommended Next Steps
 
 **Phase A — Low effort, high impact:**
-1. Wire `eq_gains_db` velocity interpolation at `noteOn` (velocity-dependent timbre).
-2. Add pitch glide parameter to `SynthConfig` and apply at forte.
+1. ✅ `eq_gains_db` velocity interpolation — already implemented in `interpolateNoteLayers()`.
+2. ✅ Pitch glide — added `pitch_glide`, `pitch_glide_tau_ms`, `pitch_glide_vel_thresh` to `SynthConfig`;
+   applied as per-sample fractional frequency offset in `resonator_voice.cpp::processBlock()`.
+   Default `pitch_glide=0.0` (off) — tune per instrument.
+3. ✅ `n_strings` from JSON — `note_lut.cpp::parseSample()` now reads `"n_strings"` from JSON with
+   fallback to hardcoded MIDI thresholds. Requires `resonators/analysis` pipeline update to emit
+   the field; C++ side is ready.
 
 **Phase B — Medium effort, high impact:**
-3. Add phantom partial extraction to `extract_params.py` and render in `resonator_voice.cpp`.
+4. Phantom partials (longitudinal) — C++ side ready:
+   - `PartialParams::is_longitudinal` flag added; `is_longitudinal=true` forces `mono=true`.
+   - Rendered identically to transverse partials but with `f≈2·f_k`, `τ≈τ/2`, single-string, no beating.
+   - ✅ C++ render path complete. **Pending**: `resonators/analysis::extract-params.py` extension
+     to detect longitudinal peaks and emit `"is_longitudinal": true` entries in `params.json`.
+5. ✅ Longitudinal precursor (bass, MIDI < 50) — short high-frequency noise burst at noteOn
+   for bass notes. Controlled by `SynthConfig::longitudinal_precursor` (default 0.0 = off).
+   Duration auto-scaled to 2 string cycles (≈ 2/f₀), capped at 10 ms.
 
-**Phase C — Architecture consideration:**
-4. Reparametrize `tau1/tau2` as physical `b1/b3` coefficients for Phase 2 DDSP training and Phase 3 latent space interpolation (Simionato 2024 model).
-5. For latent space (Phase 3): model instrument interpolation via soundboard mobility proxy, not raw param vectors (MAESSTRO recommendation).
+**Phase C — Soundboard modal transients (medium effort):**
+6. Add 6–12 IIR bandpass resonators per voice (shared tuning across all notes), excited by
+   impulse at noteOn, decay τ ≈ 50–300 ms. Captures "body" at attack onset.
+   Parameters could be globally fixed or extracted from low-frequency EQ residuals.
+
+**Phase D — Architecture / training:**
+7. Reparametrize `tau1/tau2` as physical `b1/b3` coefficients for DDSP training and latent
+   space interpolation (Simionato 2024 model).
+8. For latent space: model instrument interpolation via soundboard mobility proxy, not raw
+   param vectors (MAESSTRO recommendation).

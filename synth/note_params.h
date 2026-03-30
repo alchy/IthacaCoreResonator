@@ -21,9 +21,10 @@ struct PartialParams {
     float tau1        = 3.f;   // fast bi-exp decay time constant (s)
     float tau2        = 10.f;  // slow bi-exp decay time constant (s); null → tau1*3
     float a1          = 0.6f;  // bi-exp mixing weight (tau1 fraction)
-    float beat_hz     = 0.f;   // inter-string detuning (Hz)
-    float beat_depth  = 0.f;   // beating depth (0..1), 0 = pure tone
-    bool  mono        = false; // true → no inter-string beating for this partial
+    float beat_hz        = 0.f;   // inter-string detuning (Hz)
+    float beat_depth     = 0.f;   // beating depth (0..1), 0 = pure tone
+    bool  mono           = false; // true → no inter-string beating for this partial
+    bool  is_longitudinal= false; // true → phantom partial (f≈2·f_k, τ≈τ/2, always mono)
 };
 
 // ── Noise parameters ──────────────────────────────────────────────────────────
