@@ -55,8 +55,10 @@ struct SynthConfig {
     float render_ref_duration_s  = 3.0f;    // seconds; matches Python render(duration=3.0)
 
     // ── Velocity ──────────────────────────────────────────────────────────────
-    // vel_gain = ((midi_vel + 1) / 8)^vel_gamma  — matches Python synthesize_note().
-    // Range: vel=1 → ~0.16 (ppp), vel=64 → ~2.1 (mf), vel=127 → ~7.0 (fff).
+    // vel_gain = ((vel_band + 1) / 8)^vel_gamma  — matches Python synthesize_note().
+    // vel_band is velocity band 0-7 (NOT raw MIDI 0-127).  MIDI velocity is mapped
+    // to band 0-7 in handleNoteOn; the render server also uses band 0-7.
+    // Range: vel_band=0 → ~0.20 (ppp), vel_band=4 → ~0.76 (mf), vel_band=7 → 1.00 (fff).
     // Applied as multiplier on target_rms for both partials and noise.
     float vel_gamma           = 0.7f;
 };

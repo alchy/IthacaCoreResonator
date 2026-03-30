@@ -78,9 +78,12 @@ std::vector<float> OfflineRenderer::renderNote(int   midi,
     // Stop any lingering voices
     vm_.stopAllVoices();
 
-    // Trigger the note
-    vm_.setNoteStateMIDI(static_cast<uint8_t>(midi), true,
-                          static_cast<uint8_t>(vel));
+    // vel is velocity band 0-7 (Python training convention).
+    // Convert to equivalent MIDI velocity so handleNoteOn maps back to the
+    // correct LUT layer and vel_band for amplitude.  (handleNoteOn applies
+    // vel_pos = midi_vel * 7 / 127, so midi_vel = band * 127 / 7 round-trips.)
+    const uint8_t midi_vel = static_cast<uint8_t>(std::clamp(vel * 127 / 7, 0, 127));
+    vm_.setNoteStateMIDI(static_cast<uint8_t>(midi), true, midi_vel);
 
     // Determine sample budget
     const float  max_dur   = (duration_s > 0.f) ? duration_s : MAX_DURATION_S;

@@ -103,8 +103,11 @@ void ResonatorVoiceManager::handleNoteOn(uint8_t midi, uint8_t vel) noexcept {
     NoteParams p  = interpolateNoteLayers(lut_, (int)midi, vel_pos);
     if (!p.valid) return;
 
-    // Pass raw MIDI velocity so voice applies vel_gamma amplitude curve.
-    voices_[midi - MIDI_MIN].noteOn((int)midi, (int)vel, p, sample_rate_, synth_cfg_);
+    // Map to velocity band 0-7 (matches training data convention).
+    // Formula ((vel+1)/8)^gamma is calibrated for this range; raw MIDI vel would
+    // produce vel_gain up to 7× at vel=127, causing clipping.
+    const int vel_band = static_cast<int>(std::round(vel_pos));  // 0-7
+    voices_[midi - MIDI_MIN].noteOn((int)midi, vel_band, p, sample_rate_, synth_cfg_);
     last_note_seed_.store(voices_[midi - MIDI_MIN].getLastSeed(), std::memory_order_relaxed);
 }
 
