@@ -169,7 +169,7 @@ class InstrumentProfile(nn.Module):
         nn.init.constant_(self.noise_net[-1].bias[2], -2.8)
 
         # biexp_net biases: a1 → logit(0.85) ≈ 1.73 (mostly fast decay);
-        # log(tau2/tau1) → log(3) ≈ 1.1 (tau2 ≈ 3×tau1)
+        # log(tau2/tau1) → log(3) ≈ 1.1 (tau2 ≈ 3×tau1, matching extraction threshold)
         nn.init.constant_(self.biexp_net[-1].bias[0],  1.73)
         nn.init.constant_(self.biexp_net[-1].bias[1],  1.10)
 
@@ -294,7 +294,7 @@ def build_dataset(samples: dict) -> dict:
             tau2_val = p.get("tau2")
             if (a1_val is not None and tau2_val is not None
                     and 0.01 < a1_val < 0.99 and t1 > 0.005
-                    and tau2_val > t1 * 1.1):
+                    and tau2_val > t1 * 3.0):
                 logit_a1 = math.log(a1_val / (1.0 - a1_val))
                 log_ratio = math.log(tau2_val / t1)
                 biexp_data.append((mf, kf, vf, logit_a1, log_ratio))
@@ -600,7 +600,7 @@ def generate_profile(
                     a1_raw   = float(torch.sigmoid(biexp_pred[0]).item())
                     tau2_ratio = float(torch.exp(biexp_pred[1]).item())
                     a1_val   = float(np.clip(a1_raw, 0.05, 0.99))
-                    tau2_val = tau1 * max(tau2_ratio, 1.1)  # tau2 always > tau1
+                    tau2_val = tau1 * max(tau2_ratio, 3.0)  # tau2 ≥ 3×tau1 (matches extraction threshold)
                     # Only emit tau2/a1 when meaningfully biexponential (a1 < 0.92)
                     emit_biexp = a1_val < 0.92
 
