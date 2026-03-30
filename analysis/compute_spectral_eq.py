@@ -125,9 +125,12 @@ def process_sample(key: str):
         orig_mono = orig_stereo.mean(axis=1).astype(np.float64)
 
         # ── Synthesize (no EQ, eq_strength=0 is the default) ──────────────
+        # Cap duration: 3 s is sufficient for a stable LTASE estimate.
+        # Bass notes (MIDI < 40) can be 10+ s — Python synthesis is too slow.
+        synth_dur = min(float(sample.get('duration_s', 3.0)), 3.0)
         synth_stereo = synthesize_note(
             sample,
-            duration=None,          # uses duration_s from params
+            duration=synth_dur,
             sr=sr_use,
             soundboard_strength=0.0,
             beat_scale=1.0,

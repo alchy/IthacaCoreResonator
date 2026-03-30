@@ -58,17 +58,21 @@ std::vector<float> OfflineRenderer::renderNote(int   midi,
     }
 
     // Push current SynthConfig into vm_ field-by-field
-    vm_.setSynthPanSpread         (cfg_.pan_spread);
-    vm_.setSynthBeatScale         (cfg_.beat_scale);
-    vm_.setSynthStereoDecorr      (cfg_.stereo_decorr);
-    vm_.setSynthStereoBoost       (cfg_.stereo_boost);
-    vm_.setSynthEqStrength        (cfg_.eq_strength);
-    vm_.setSynthEqFreqMin         (cfg_.eq_freq_min);
-    vm_.setSynthNoiseLevel        (cfg_.noise_level);
-    vm_.setSynthOnsetMs           (cfg_.onset_ms);
-    vm_.setSynthHarmonicBrightness(cfg_.harmonic_brightness);
-    vm_.setSynthTargetRms         (cfg_.target_rms);
-    vm_.setSynthVelGamma          (cfg_.vel_gamma);
+    vm_.setSynthPanSpread            (cfg_.pan_spread);
+    vm_.setSynthPanTilt              (cfg_.pan_tilt);
+    vm_.setSynthBeatScale            (cfg_.beat_scale);
+    vm_.setSynthStereoDecorr         (cfg_.stereo_decorr);
+    vm_.setSynthStereoDecorrMidiLo   (cfg_.stereo_decorr_midi_lo);
+    vm_.setSynthStereoDecorrMidiHi   (cfg_.stereo_decorr_midi_hi);
+    vm_.setSynthStereoDecorrMax      (cfg_.stereo_decorr_max);
+    vm_.setSynthStereoBoost          (cfg_.stereo_boost);
+    vm_.setSynthEqStrength           (cfg_.eq_strength);
+    vm_.setSynthEqFreqMin            (cfg_.eq_freq_min);
+    vm_.setSynthNoiseLevel           (cfg_.noise_level);
+    vm_.setSynthOnsetMs              (cfg_.onset_ms);
+    vm_.setSynthHarmonicBrightness   (cfg_.harmonic_brightness);
+    vm_.setSynthTargetRms            (cfg_.target_rms);
+    vm_.setSynthVelGamma             (cfg_.vel_gamma);
 
     // Stop any lingering voices
     vm_.stopAllVoices();

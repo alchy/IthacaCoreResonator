@@ -12,7 +12,11 @@
 struct SynthConfig {
     // ── Stereo geometry ───────────────────────────────────────────────────────
     float pan_spread          = 0.55f;   // string spread in rad  (half = pan_spread/2)
-    float stereo_decorr       = 1.0f;    // Schroeder all-pass blend multiplier
+    float pan_tilt            = 0.20f;   // keyboard tilt: center += (midi-64.5)/87 * pan_tilt
+    float stereo_decorr       = 1.0f;    // Schroeder all-pass blend multiplier (0=off, 1=full)
+    float stereo_decorr_midi_lo = 40.f;  // MIDI note where decorrelation starts
+    float stereo_decorr_midi_hi = 100.f; // MIDI note where decorrelation reaches maximum
+    float stereo_decorr_max   = 0.45f;  // max decorrelation depth before stereo_decorr scale
     float stereo_boost        = 1.0f;    // M/S side-channel boost on top of width_factor
 
     // ── Timbre ────────────────────────────────────────────────────────────────

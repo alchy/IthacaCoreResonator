@@ -47,8 +47,9 @@ static const float STRING_SIGNS[3][3] = {
 // ── Dynamic string pan angles (Python _string_angles) ────────────────────────
 // center = π/4 + (midi-64.5)/87 * 0.20   (bass=left, treble=right)
 // half   = pan_spread/2
-static void computeStringAngles(int midi, int n_strings, float pan_spread, float* angles) {
-    float center = PI/4.f + ((float)midi - 64.5f) / 87.f * 0.20f;
+static void computeStringAngles(int midi, int n_strings, float pan_spread,
+                                 float pan_tilt, float* angles) {
+    float center = PI/4.f + ((float)midi - 64.5f) / 87.f * pan_tilt;
     float half   = pan_spread * 0.5f;
     if (n_strings == 1) {
         angles[0] = center;
@@ -89,7 +90,7 @@ void ResonatorVoice::noteOn(int midi, int vel,
     // ── Per-string pan: MIDI-dependent center tilt + pan_spread from config ──
     {
         float angles[MAX_STRINGS] = {};
-        computeStringAngles(midi, n_strings_, cfg.pan_spread, angles);
+        computeStringAngles(midi, n_strings_, cfg.pan_spread, cfg.pan_tilt, angles);
         for (int s = 0; s < n_strings_; s++) {
             pan_l_[s] = std::cos(angles[s]);
             pan_r_[s] = std::sin(angles[s]);
@@ -97,10 +98,11 @@ void ResonatorVoice::noteOn(int midi, int vel,
     }
 
     // ── Schroeder all-pass decorrelation coefficients ─────────────────────────
-    // Python: decor_strength = min(1,(midi-40)/60)*0.45 * stereo_decorr
+    // Python: decor_strength = min(1,(midi-lo)/(hi-lo)) * decorr_max * stereo_decorr
     {
-        float ds = std::min(1.f, std::max(0.f, ((float)midi - 40.f) / 60.f))
-                   * 0.45f * cfg.stereo_decorr;
+        float range = std::max(1.f, cfg.stereo_decorr_midi_hi - cfg.stereo_decorr_midi_lo);
+        float ds = std::min(1.f, std::max(0.f, ((float)midi - cfg.stereo_decorr_midi_lo) / range))
+                   * cfg.stereo_decorr_max * cfg.stereo_decorr;
         ap_g_l_      =  0.35f + ds * 0.25f;
         ap_g_r_      = -(0.35f + ds * 0.20f);
         ap_strength_ =  ds;

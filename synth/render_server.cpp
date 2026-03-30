@@ -25,21 +25,25 @@ static json err(const std::string& m){ return {{"status","error"},{"msg",m}}; }
 // Serialize SynthConfig → json object
 static json config_to_json(const SynthConfig& c) {
     return {
-        {"pan_spread",           c.pan_spread},
-        {"stereo_decorr",        c.stereo_decorr},
-        {"stereo_boost",         c.stereo_boost},
-        {"beat_scale",           c.beat_scale},
-        {"harmonic_brightness",  c.harmonic_brightness},
-        {"eq_strength",          c.eq_strength},
-        {"eq_freq_min",          c.eq_freq_min},
-        {"noise_level",          c.noise_level},
-        {"pitch_glide",          c.pitch_glide},
-        {"pitch_glide_tau_ms",   c.pitch_glide_tau_ms},
-        {"pitch_glide_vel_thresh", c.pitch_glide_vel_thresh},
-        {"longitudinal_precursor", c.longitudinal_precursor},
-        {"onset_ms",             c.onset_ms},
-        {"target_rms",           c.target_rms},
-        {"vel_gamma",            c.vel_gamma},
+        {"pan_spread",              c.pan_spread},
+        {"pan_tilt",                c.pan_tilt},
+        {"stereo_decorr",           c.stereo_decorr},
+        {"stereo_decorr_midi_lo",   c.stereo_decorr_midi_lo},
+        {"stereo_decorr_midi_hi",   c.stereo_decorr_midi_hi},
+        {"stereo_decorr_max",       c.stereo_decorr_max},
+        {"stereo_boost",            c.stereo_boost},
+        {"beat_scale",              c.beat_scale},
+        {"harmonic_brightness",     c.harmonic_brightness},
+        {"eq_strength",             c.eq_strength},
+        {"eq_freq_min",             c.eq_freq_min},
+        {"noise_level",             c.noise_level},
+        {"pitch_glide",             c.pitch_glide},
+        {"pitch_glide_tau_ms",      c.pitch_glide_tau_ms},
+        {"pitch_glide_vel_thresh",  c.pitch_glide_vel_thresh},
+        {"longitudinal_precursor",  c.longitudinal_precursor},
+        {"onset_ms",                c.onset_ms},
+        {"target_rms",              c.target_rms},
+        {"vel_gamma",               c.vel_gamma},
     };
 }
 
@@ -52,7 +56,11 @@ static void apply_config(const json& j, SynthConfig& c) {
         if (j.contains(k)) v = j.at(k).get<int>();
     };
     f("pan_spread",             c.pan_spread);
+    f("pan_tilt",               c.pan_tilt);
     f("stereo_decorr",          c.stereo_decorr);
+    f("stereo_decorr_midi_lo",  c.stereo_decorr_midi_lo);
+    f("stereo_decorr_midi_hi",  c.stereo_decorr_midi_hi);
+    f("stereo_decorr_max",      c.stereo_decorr_max);
     f("stereo_boost",           c.stereo_boost);
     f("beat_scale",             c.beat_scale);
     f("harmonic_brightness",    c.harmonic_brightness);

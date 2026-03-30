@@ -122,29 +122,37 @@ public:
 
     // ── Synthesis rendering config (mirrors physics_synth.py kwargs) ──────────
     // Changes take effect on next noteOn.
-    void setSynthPanSpread         (float v) noexcept { synth_cfg_.pan_spread          = v; }
-    void setSynthBeatScale         (float v) noexcept { synth_cfg_.beat_scale          = v; }
-    void setSynthStereoDecorr      (float v) noexcept { synth_cfg_.stereo_decorr       = v; }
-    void setSynthStereoBoost       (float v) noexcept { synth_cfg_.stereo_boost        = v; }
-    void setSynthEqStrength        (float v) noexcept { synth_cfg_.eq_strength         = v; }
-    void setSynthEqFreqMin         (float v) noexcept { synth_cfg_.eq_freq_min         = v; }
-    void setSynthNoiseLevel        (float v) noexcept { synth_cfg_.noise_level         = v; }
-    void setSynthOnsetMs           (float v) noexcept { synth_cfg_.onset_ms            = v; }
-    void setSynthHarmonicBrightness(float v) noexcept { synth_cfg_.harmonic_brightness = v; }
-    void setSynthTargetRms         (float v) noexcept { synth_cfg_.target_rms          = v; }
-    void setSynthVelGamma          (float v) noexcept { synth_cfg_.vel_gamma           = v; }
+    void setSynthPanSpread            (float v) noexcept { synth_cfg_.pan_spread             = v; }
+    void setSynthPanTilt              (float v) noexcept { synth_cfg_.pan_tilt               = v; }
+    void setSynthBeatScale            (float v) noexcept { synth_cfg_.beat_scale             = v; }
+    void setSynthStereoDecorr         (float v) noexcept { synth_cfg_.stereo_decorr          = v; }
+    void setSynthStereoDecorrMidiLo   (float v) noexcept { synth_cfg_.stereo_decorr_midi_lo  = v; }
+    void setSynthStereoDecorrMidiHi   (float v) noexcept { synth_cfg_.stereo_decorr_midi_hi  = v; }
+    void setSynthStereoDecorrMax      (float v) noexcept { synth_cfg_.stereo_decorr_max      = v; }
+    void setSynthStereoBoost          (float v) noexcept { synth_cfg_.stereo_boost           = v; }
+    void setSynthEqStrength           (float v) noexcept { synth_cfg_.eq_strength            = v; }
+    void setSynthEqFreqMin            (float v) noexcept { synth_cfg_.eq_freq_min            = v; }
+    void setSynthNoiseLevel           (float v) noexcept { synth_cfg_.noise_level            = v; }
+    void setSynthOnsetMs              (float v) noexcept { synth_cfg_.onset_ms               = v; }
+    void setSynthHarmonicBrightness   (float v) noexcept { synth_cfg_.harmonic_brightness    = v; }
+    void setSynthTargetRms            (float v) noexcept { synth_cfg_.target_rms             = v; }
+    void setSynthVelGamma             (float v) noexcept { synth_cfg_.vel_gamma              = v; }
 
-    float getSynthPanSpread()          const noexcept { return synth_cfg_.pan_spread;          }
-    float getSynthBeatScale()          const noexcept { return synth_cfg_.beat_scale;          }
-    float getSynthStereoDecorr()       const noexcept { return synth_cfg_.stereo_decorr;       }
-    float getSynthStereoBoost()        const noexcept { return synth_cfg_.stereo_boost;        }
-    float getSynthEqStrength()         const noexcept { return synth_cfg_.eq_strength;         }
-    float getSynthEqFreqMin()          const noexcept { return synth_cfg_.eq_freq_min;         }
-    float getSynthNoiseLevel()         const noexcept { return synth_cfg_.noise_level;         }
-    float getSynthOnsetMs()            const noexcept { return synth_cfg_.onset_ms;            }
-    float getSynthHarmonicBrightness() const noexcept { return synth_cfg_.harmonic_brightness; }
-    float getSynthTargetRms()          const noexcept { return synth_cfg_.target_rms;          }
-    float getSynthVelGamma()           const noexcept { return synth_cfg_.vel_gamma;           }
+    float getSynthPanSpread()             const noexcept { return synth_cfg_.pan_spread;             }
+    float getSynthPanTilt()               const noexcept { return synth_cfg_.pan_tilt;               }
+    float getSynthBeatScale()             const noexcept { return synth_cfg_.beat_scale;             }
+    float getSynthStereoDecorr()          const noexcept { return synth_cfg_.stereo_decorr;          }
+    float getSynthStereoDecorrMidiLo()    const noexcept { return synth_cfg_.stereo_decorr_midi_lo;  }
+    float getSynthStereoDecorrMidiHi()    const noexcept { return synth_cfg_.stereo_decorr_midi_hi;  }
+    float getSynthStereoDecorrMax()       const noexcept { return synth_cfg_.stereo_decorr_max;      }
+    float getSynthStereoBoost()           const noexcept { return synth_cfg_.stereo_boost;           }
+    float getSynthEqStrength()            const noexcept { return synth_cfg_.eq_strength;            }
+    float getSynthEqFreqMin()             const noexcept { return synth_cfg_.eq_freq_min;            }
+    float getSynthNoiseLevel()            const noexcept { return synth_cfg_.noise_level;            }
+    float getSynthOnsetMs()               const noexcept { return synth_cfg_.onset_ms;               }
+    float getSynthHarmonicBrightness()    const noexcept { return synth_cfg_.harmonic_brightness;    }
+    float getSynthTargetRms()             const noexcept { return synth_cfg_.target_rms;             }
+    float getSynthVelGamma()              const noexcept { return synth_cfg_.vel_gamma;              }
 
     const SynthConfig& getSynthConfig() const noexcept { return synth_cfg_; }
 

@@ -10,16 +10,18 @@ enum class LogSeverity { Debug = 0, Info, Warning, Error, Critical };
 
 class Logger {
 public:
-    // use_stderr: write log output to stderr instead of stdout.
-    // Set true in headless/server contexts so protocol stdout stays clean.
+    // output: where log lines go (nullptr = muted)
+    //   nullptr  — silent (default for headless/server contexts)
+    //   stdout   — interactive use (IthacaCoreResonator main)
+    //   stderr   — verbose server mode (--verbose flag)
     explicit Logger(const std::string& /*log_dir*/ = ".",
-                    bool use_stderr = false)
-        : use_stderr_(use_stderr) {}
+                    std::FILE* output = nullptr)
+        : out_(output) {}
 
     void log(const char* tag, LogSeverity sev, const std::string& msg) const {
+        if (!out_) return;
         const char* prefix[] = {"DBG","INF","WRN","ERR","CRT"};
-        std::FILE* out = use_stderr_ ? stderr : stdout;
-        std::fprintf(out, "[%s][%s] %s\n", prefix[(int)sev], tag, msg.c_str());
+        std::fprintf(out_, "[%s][%s] %s\n", prefix[(int)sev], tag, msg.c_str());
     }
 
     // RT-safe ring-buffer variant (stub — flushes immediately here)
@@ -28,5 +30,5 @@ public:
     }
 
 private:
-    bool use_stderr_ = false;
+    std::FILE* out_ = nullptr;
 };

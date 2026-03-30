@@ -22,7 +22,7 @@ int main(int argc, char* argv[]) {
         : "soundbanks/salamander.json";
 
     try {
-        Logger logger;
+        Logger logger(".", stdout);
         logger.log("main", LogSeverity::Info,
                    "=== IthacaCoreResonatorGUI STARTING ===");
 

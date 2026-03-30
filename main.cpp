@@ -31,7 +31,7 @@ int main(int argc, char* argv[]) {
     int midi_port = (argc > 2) ? std::atoi(argv[2]) : 0;
 
     try {
-        Logger logger;
+        Logger logger(".", stdout);
         return runResonator(logger, params_json, midi_port);
 
     } catch (const std::exception& e) {
