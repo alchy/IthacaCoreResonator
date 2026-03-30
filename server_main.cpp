@@ -34,7 +34,7 @@ int main(int argc, char* argv[]) {
     std::fprintf(stderr, "[IthacaRenderServer] params: %s\n", params_json.c_str());
 
     try {
-        Logger logger;
+        Logger logger(".", /*use_stderr=*/true);
         // Heap-allocate: ResonatorVoiceManager is ~400 KB (88 voices × 5 KB each)
         auto server = std::make_unique<RenderServer>();
 
