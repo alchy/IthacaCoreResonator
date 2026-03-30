@@ -298,18 +298,22 @@ Available measured samples: 704
 Train/eval split: 632 train, 72 eval
 Model parameters: 99,214
 
-epoch  100/1800  loss=0.914945  lr=2.98e-03  eval=1.617853
-epoch  300/1800  loss=0.860287  lr=2.80e-03  eval=1.259550
-epoch  600/1800  loss=0.837567  lr=2.26e-03  eval=1.234982
-epoch  900/1800  loss=0.794354  lr=1.51e-03  eval=1.159825
-epoch 1200/1800  loss=0.775356  lr=7.73e-04  eval=1.107646
-epoch 1500/1800  loss=0.766831  lr=2.29e-04  eval=1.102404
-epoch 1800/1800  loss=0.764882  lr=3.00e-05  eval=1.101438
+epoch  100/1800  loss=1.133206  lr=2.98e-03  eval=1.507818
+epoch  300/1800  loss=1.070663  lr=2.80e-03  eval=1.213169
+epoch  600/1800  loss=1.030450  lr=2.26e-03  eval=1.258982
+epoch  900/1800  loss=0.989487  lr=1.51e-03  eval=1.286126
+epoch 1200/1800  loss=0.973444  lr=7.73e-04  eval=1.285231
+epoch 1500/1800  loss=0.968038  lr=2.29e-04  eval=1.288656
+epoch 1800/1800  loss=0.966700  lr=3.00e-05  eval=1.288875
 
 Model saved -> analysis/profile.pt
 Written -> analysis/params-nn-profile-ks-grand.json
   NN-interpolated: 0  |  Measured originals: 704
 ```
+
+Poznamka: `eval` obsahuje jak physics loss tak EQ MSE loss (`eval = physics + 0.1 * eq_mse`).
+Vysledny eval ~1.29 odpovida physics eval ~1.14 + 0.1 × eq_mse ~0.15.
+Bez EQ termu (stary trening) byl eval=1.101 — to bylo nize, protoze eq_net nebyl supervizovan.
 
 ### Vystupy
 
