@@ -14,7 +14,7 @@ public:
 
     void log(const char* tag, LogSeverity sev, const std::string& msg) const {
         const char* prefix[] = {"DBG","INF","WRN","ERR","CRT"};
-        std::printf("[%s][%s] %s\n", prefix[(int)sev], tag, msg.c_str());
+        std::fprintf(stderr, "[%s][%s] %s\n", prefix[(int)sev], tag, msg.c_str());
     }
 
     // RT-safe ring-buffer variant (stub — flushes immediately here)

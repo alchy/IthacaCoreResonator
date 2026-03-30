@@ -201,6 +201,55 @@ else()
     )
 endif()
 
+# ── IthacaRenderServer — headless offline renderer for training-loop IPC ──────
+#
+# Excludes resonator_engine.cpp (miniaudio device I/O) and midi_input.cpp
+# (RtMidi) — not needed for offline rendering.  No system audio libs required.
+
+set(RENDER_SYNTH_SOURCES
+    synth/note_lut.cpp
+    synth/resonator_voice.cpp
+    synth/voice_manager.cpp
+    synth/biquad_eq.cpp
+    synth/offline_renderer.cpp
+    synth/render_server.cpp
+)
+
+add_executable(IthacaRenderServer
+    server_main.cpp
+    ${RENDER_SYNTH_SOURCES}
+    ${DSP_SOURCES}
+)
+
+target_include_directories(IthacaRenderServer PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/synth
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64|X86_64")
+    if (MSVC)
+        target_compile_options(IthacaRenderServer PRIVATE /arch:AVX2)
+    else()
+        target_compile_options(IthacaRenderServer PRIVATE -mavx2 -mfma)
+    endif()
+endif()
+
+if (MSVC)
+    target_compile_options(IthacaRenderServer PRIVATE
+        $<$<CONFIG:Debug>:   /Od /Zi>
+        $<$<CONFIG:Release>: /O2 /DNDEBUG>
+    )
+    target_compile_definitions(IthacaRenderServer PRIVATE
+        _CRT_SECURE_NO_WARNINGS WIN32_LEAN_AND_MEAN)
+else()
+    target_compile_options(IthacaRenderServer PRIVATE
+        $<$<CONFIG:Debug>:   -g -O0>
+        $<$<CONFIG:Release>: -O3 -DNDEBUG>
+    )
+    target_link_libraries(IthacaRenderServer PRIVATE pthread m dl)
+endif()
+
 # ── Custom targets ────────────────────────────────────────────────────────────
 
 add_custom_target(run
