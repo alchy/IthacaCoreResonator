@@ -121,6 +121,8 @@ void MidiInput::callback(double /*ts*/,
         char typebuf[16];
         std::snprintf(typebuf, sizeof(typebuf), "0x%02X", sxtype);
         bool ok = sysexApply(*msg, self->engine_->getVoiceManager());
+        if (ok)
+            self->activity_.sysex_ms.store(t, std::memory_order_relaxed);
         if (log) {
             if (ok) {
                 log->log("SYSEX", LogSeverity::Info,

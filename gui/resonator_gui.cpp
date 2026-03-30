@@ -378,6 +378,8 @@ int runResonatorGui(ResonatorEngine& engine, Logger& logger,
 
             midiLed("MIDI DATA",   act.any_ms.load(std::memory_order_relaxed));
             ledSep();
+            midiLed("SysEx",       act.sysex_ms.load(std::memory_order_relaxed));
+            ledSep();
             midiLed("Note ON",     act.note_on_ms.load(std::memory_order_relaxed));
             ledSep();
             midiLed("Note OFF",    act.note_off_ms.load(std::memory_order_relaxed));
