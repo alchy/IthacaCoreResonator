@@ -157,47 +157,59 @@ with RenderClient("build/bin/Release/IthacaRenderServer.exe",
 
 ---
 
-## Krok 5 — Surrogate model (TODO)
+## Krok 5 — Instrument profile (surrogate smooth model)
 
-Cíl: natrénovat diferenciální NN approximující C++ engine, pak přes NN optimalizovat synth parametry.
+Cíl: natrénovat fyzikálně-motivovanou NN, která vyhladí extrahované parametry přes celý
+MIDI rozsah — vyplní chybějící/dropped not a opraví extrakční šum.
 
-### Architektura (navržená)
+### Architektura (faktorizovaná NN)
 
 ```
-Vstup: (midi, vel) → fyzikální features (B, f0_nominal, n_strings, ...)
-                    ↓
-          Factorisovaná NN (physics-motivated):
-            sub-net B(midi)        → inharmonicita
-            sub-net tau(midi, vel) → decay
-            sub-net A0(midi, vel)  → amplitudy
-            sub-net df(midi, vel)  → beating detune
-            sub-net EQ(midi, vel)  → spektrální korekce
-                    ↓
-          SynthConfig params → IthacaRenderServer → WAV
+Vstup: (midi, vel, k_partial)
+           ↓
+  B_net        MLP(midi)           → B          (inharmonicita, vel-nezávislá)
+  tau1_k1_net  MLP(midi, vel)      → tau1 pro k=1
+  tau_ratio_net MLP(midi, k)       → log(tau_k / tau_k1)
+  A0_net       MLP(midi, k, vel)   → log(A0_ratio)
+  df_net       MLP(midi, k)        → beating detune
+  eq_net       MLP(midi, freq)     → EQ gain_db
+  noise_net    MLP(midi, vel)      → attack_tau, centroid_hz, A_noise
+  biexp_net    MLP(midi, k, vel)   → a1, tau2/tau1
+  dur_net      MLP(midi)           → duration_s
 ```
 
-### Training loop
+Všechny pozitivní výstupy trénované v log-space (MSE na log hodnotách = geometrická chyba).
+Výstupy: NN-smoothed profil zachovává původní naměřené hodnoty (`--no-preserve-orig` pro override).
 
-```python
-# 1. Generování (params → render → WAV) párů
-# 2. Feature extrakce z WAV (mel-spektrogram nebo per-partial features)
-# 3. Loss: MSE v mel-spektrogram nebo perceptual (STFT loss)
-# 4. Backprop přes NN surrogate (ne přes C++ — ten je black box oracle)
-# 5. Optimalizace SynthConfig params přes surrogate
+### Spuštění
 
-# Render server jako oracle pro ground truth:
-rc.set_config(**current_params)
-rc.render(midi=m, vel=v, output=wav_path)
-target_features = extract_features(wav_path)
+```bash
+python -u analysis/train_instrument_profile.py \
+    --in    analysis/params-ks-grand.json \
+    --out   analysis/params-nn-profile-ks-grand.json \
+    --model analysis/profile.pt \
+    --epochs 800 --hidden 64 --lr 0.003
 ```
 
-### Surrogate vs. přímá optimalizace
+### Výsledky (ks-grand, 2026-03-30)
 
-- C++ je black box — chain rule se přeruší na hranici subprocess
-- NN surrogate nahrazuje C++ pro gradient computation
-- C++ slouží jako ground truth oracle pro generování training dat
-- Surrogate se trénuje na (SynthConfig params → audio features) mapování
-- Výsledek: optimalizované SynthConfig, ne natrénovaná NN pro přímé použití
+```
+Available measured samples: 603
+Dataset: B=576  tau=4735  tau1_k1=603  A0=31911  df=24272  eq=9648  noise=603  biexp=5433
+Model parameters: 90,189
+Final loss: 0.826 (log-space MSE)
+
+Output: 704 entries (603 originals preserved + 101 NN-generated)
+NN B range: 1.37e-4 – 1.70e-3 (fyzikálně správný rozsah)
+Model:  analysis/profile.pt
+Output: analysis/params-nn-profile-ks-grand.json
+```
+
+### Poznámky
+
+- 23 originálních samplov má B ≈ 0 (extrakce selhala, přežily outlier filter) — NN je nahradila správnými hodnotami pro NN-generated pozice; pro zachované originály zůstávají (jsou označeny `_from_profile=false`)
+- Chybějící pozice (dropped vel=7 treble, mezery v LUT) jsou doplněny NN a označeny `_from_profile=true`
+- Model lze re-použít: `torch.load("analysis/profile.pt")` vrátí `{"model": ..., "args": ...}`
 
 ---
 
