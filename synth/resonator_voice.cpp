@@ -231,10 +231,10 @@ void ResonatorVoice::noteOn(int midi, int vel,
     float fc_noise   = std::min(p.noise.centroid_hz, sample_rate * 0.45f);
     noise_alpha_     = 1.f - std::exp(-TAU * fc_noise / sample_rate);
     noise_decay_     = std::exp(-1.f / (std::max(taun, 0.001f) * sample_rate));
-    // Noise scales with target_rms * vel_gain only — NOT with level_scale.
-    // level_scale embeds a per-partial normalization (sqrt(2*n_strings)/sqrt(Σnorm²))
-    // that is wrong for noise (a fixed spectral floor, not an exponential partial).
-    // Python: A_noise is an absolute RMS value, not scaled by partial normalization.
+    // A_noise (floor_rms) is a dimensionless ratio: noise_rms / signal_onset_rms.
+    // Multiplying by (target_rms * vel_gain) preserves the recording's noise/signal
+    // ratio at the synthesis output level.  level_scale must NOT be used here —
+    // it contains partial normalization irrelevant to noise and would cause [WAV]^2 error.
     noise_env_       = p.noise.floor_rms * cfg.noise_level * (cfg.target_rms * vel_gain);
     noise_state_l_   = 0.f;
     noise_state_r_   = 0.f;

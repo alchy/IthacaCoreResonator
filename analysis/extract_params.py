@@ -419,7 +419,9 @@ def analyze_noise(audio: np.ndarray, sr: int,
     Estimate noise model by analyzing early attack residual after harmonic subtraction.
     Returns {'attack_tau_s', 'A_noise', 'centroid_hz', 'spectral_slope_db_oct'}.
 
-    A_noise: peak RMS of the noise burst (at attack onset, not the last decayed frame).
+    A_noise: dimensionless ratio — peak noise RMS / total signal RMS at the same frame.
+             Stored as SNR so C++ can scale by (target_rms * vel_gain) without
+             unit mismatch.  A_noise ≈ 0.04–0.15 for typical piano notes.
     centroid_hz: spectral centroid of the residual (after harmonic subtraction),
                  avoiding contamination from string partials still present at t=0.1s.
     """
@@ -465,9 +467,22 @@ def analyze_noise(audio: np.ndarray, sr: int,
 
     if len(rms_env) >= 6:
         i_peak = rms_env.argmax()
-        # A_noise: peak noise burst amplitude (not the last decayed frame).
-        # This correctly represents the hammer-impact noise level at onset.
-        result['A_noise'] = float(rms_env[i_peak])
+
+        # Compute RMS envelope of the raw attack (signal + noise) at same hop/frame.
+        rms_signal = np.array([
+            math.sqrt(max(np.mean(attack[i * hop: i * hop + frame] ** 2), 1e-30))
+            for i in range(n_frames)
+        ])
+        signal_rms_at_peak = float(rms_signal[i_peak])
+
+        # A_noise: dimensionless noise/signal ratio at the onset peak frame.
+        # Dividing by signal_rms brings both numerator and denominator to the same
+        # WAV-amplitude reference, yielding a unit-free coefficient that the C++
+        # synth can directly multiply by (target_rms * vel_gain).
+        if signal_rms_at_peak > 1e-10:
+            result['A_noise'] = float(rms_env[i_peak]) / signal_rms_at_peak
+        else:
+            result['A_noise'] = float(rms_env[i_peak])  # degenerate fallback
 
         t_dec = t_rms[i_peak:] - t_rms[i_peak]
         a_dec = rms_env[i_peak:]
