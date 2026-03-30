@@ -182,6 +182,34 @@ void ResonatorVoice::noteOn(int midi, int vel,
         }
     }
 
+    // ── Pitch glide ───────────────────────────────────────────────────────────
+    // Geometric nonlinearity: at forte, f₀ starts slightly sharp and glides down.
+    if (cfg.pitch_glide != 0.f && vel >= cfg.pitch_glide_vel_thresh) {
+        pitch_glide_env_   = cfg.pitch_glide;
+        pitch_glide_decay_ = std::exp(-1.f / (std::max(cfg.pitch_glide_tau_ms, 1.f)
+                                              * 0.001f * sample_rate));
+    } else {
+        pitch_glide_env_   = 0.f;
+        pitch_glide_decay_ = 1.f;
+    }
+
+    // ── Longitudinal precursor (bass only: MIDI < 50) ─────────────────────────
+    // Short high-frequency noise burst — longitudinal wave arrives before transverse.
+    // Duration ≈ 2 string cycles (≈ 2/f₀), capped at 10 ms.
+    if (midi < 50 && cfg.longitudinal_precursor > 0.f) {
+        float f0 = (p.n_partials > 0 && p.partials[0].f_hz > 0.f)
+                   ? p.partials[0].f_hz : p.f0_hz;
+        float dur_s        = std::min(0.010f, 2.f / std::max(f0, 20.f));
+        precursor_env_     = cfg.longitudinal_precursor * level_scale;
+        precursor_decay_   = std::exp(-1.f / (dur_s * sample_rate));
+        // Spectrum: concentrated around 2–4× f₀ (longitudinal modes)
+        float fc_prec      = std::min(4.f * f0, sample_rate * 0.45f);
+        precursor_alpha_   = 1.f - std::exp(-TAU * fc_prec / sample_rate);
+        precursor_state_l_ = precursor_state_r_ = 0.f;
+    } else {
+        precursor_env_ = 0.f;
+    }
+
     // ── Noise state ───────────────────────────────────────────────────────────
     // tau cap: noise never outlasts the string fundamental (Python: taun = min(taun, tau1_k1))
     float tau1_k1 = 3.f;
@@ -237,6 +265,11 @@ void ResonatorVoice::processBlock(float* out_l, float* out_r, int n_samples) {
     for (int s = 0; s < n; s++) {
         float l = 0.f, r = 0.f;
 
+        // ── Pitch glide: fractional frequency offset decaying to 0 ───────────
+        // f_k(t) = f_k · (1 + pitch_glide_env)  — applied via phase increment
+        const float pitch_mod = 1.f + pitch_glide_env_;
+        pitch_glide_env_ *= pitch_glide_decay_;
+
         // ── Oscillator sum (normalised by n_strings) ──────────────────────────
         for (int k = 0; k < n_partials_; k++) {
             env1_[k] *= d1_[k];
@@ -244,12 +277,23 @@ void ResonatorVoice::processBlock(float* out_l, float* out_r, int n_samples) {
             float env = env1_[k] + env2_[k];
 
             for (int str = 0; str < n_strings_; str++) {
-                phase_[k][str] += omega_[k][str];
+                phase_[k][str] += omega_[k][str] * pitch_mod;
                 if (phase_[k][str] > TAU) phase_[k][str] -= TAU;
                 float sig = env * std::cos(phase_[k][str]) * str_norm_;
                 l += sig * pan_l_[str];
                 r += sig * pan_r_[str];
             }
+        }
+
+        // ── Longitudinal precursor burst (bass notes, decays in ~2–10 ms) ────
+        if (precursor_env_ > 1e-9f) {
+            float wl = 2.f * (float)std::rand() / (float)RAND_MAX - 1.f;
+            float wr = 2.f * (float)std::rand() / (float)RAND_MAX - 1.f;
+            precursor_state_l_ = precursor_alpha_ * wl + (1.f - precursor_alpha_) * precursor_state_l_;
+            precursor_state_r_ = precursor_alpha_ * wr + (1.f - precursor_alpha_) * precursor_state_r_;
+            l += precursor_state_l_ * precursor_env_;
+            r += precursor_state_r_ * precursor_env_;
+            precursor_env_ *= precursor_decay_;
         }
 
         // ── Noise: independent L and R channels (Python: separate per buf) ────

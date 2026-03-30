@@ -26,6 +26,18 @@ struct SynthConfig {
     // ── Noise ─────────────────────────────────────────────────────────────────
     float noise_level         = 1.0f;    // noise amplitude multiplier
 
+    // ── Pitch glide (geometric nonlinearity at forte) ─────────────────────────
+    // At large amplitudes f₀ starts slightly high and falls over ~100 ms.
+    // Papers: RR-9516, RR-8181, Simionato 2024.
+    float pitch_glide           = 0.0f;   // initial fractional frequency offset (e.g. 0.003)
+    float pitch_glide_tau_ms    = 80.0f;  // glide decay time constant (ms)
+    int   pitch_glide_vel_thresh= 100;    // apply only when MIDI vel >= this (forte gate)
+
+    // ── Longitudinal precursor (bass string wave, MIDI < 50) ─────────────────
+    // Short high-frequency noise burst before the transverse wave arrives.
+    // Paper: RR_9530 (Chabassier 2023). Duration auto-scaled to ~2 string cycles.
+    float longitudinal_precursor= 0.0f;   // burst amplitude relative to note level
+
     // ── Attack ────────────────────────────────────────────────────────────────
     float onset_ms            = 3.0f;    // linear ramp length to prevent click
 

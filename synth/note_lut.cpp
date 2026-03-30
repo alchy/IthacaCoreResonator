@@ -45,13 +45,17 @@ static NoteParams parseSample(const json& s) {
     p.duration_s  = get_f(s, "duration_s",  8.f);
     p.sr          = get_i(s, "sr",          48000);
 
-    // Determine n_strings from midi (standard piano stringing):
+    // n_strings: read from JSON if present; fall back to standard piano stringing.
+    // Explicit JSON value is preferred so different instruments can override the defaults:
     //   21–27  → 1 string (sub-bass)
     //   28–48  → 2 strings
     //   49–108 → 3 strings
-    if (p.midi <= 27)      p.n_strings = 1;
-    else if (p.midi <= 48) p.n_strings = 2;
-    else                   p.n_strings = 3;
+    p.n_strings = get_i(s, "n_strings", -1);
+    if (p.n_strings < 1) {
+        if (p.midi <= 27)      p.n_strings = 1;
+        else if (p.midi <= 48) p.n_strings = 2;
+        else                   p.n_strings = 3;
+    }
 
     // ── Partials ─────────────────────────────────────────────────────────────
     if (s.contains("partials") && s["partials"].is_array()) {
@@ -72,6 +76,11 @@ static NoteParams parseSample(const json& s) {
             pp.beat_depth = get_f(part, "beat_depth", 0.f);
             pp.mono       = part.contains("mono") && !part["mono"].is_null()
                             && part["mono"].get<bool>();
+            pp.is_longitudinal = part.contains("is_longitudinal")
+                            && !part["is_longitudinal"].is_null()
+                            && part["is_longitudinal"].get<bool>();
+            // Longitudinal partials are always mono (single-string, no beating).
+            if (pp.is_longitudinal) pp.mono = true;
             idx++;
         }
         p.n_partials = idx;
