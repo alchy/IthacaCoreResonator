@@ -244,6 +244,7 @@ if (MSVC)
     )
     target_compile_definitions(IthacaRenderServer PRIVATE
         _CRT_SECURE_NO_WARNINGS WIN32_LEAN_AND_MEAN)
+    target_link_libraries(IthacaRenderServer PRIVATE ws2_32)
 else()
     target_compile_options(IthacaRenderServer PRIVATE
         $<$<CONFIG:Debug>:   -g -O0>

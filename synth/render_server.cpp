@@ -1,10 +1,11 @@
 /*
  * render_server.cpp
  * ──────────────────
- * stdin/stdout JSON command dispatcher.
+ * TCP JSON command dispatcher.
  *
  * Uses nlohmann/json (third_party/json.hpp) for parsing and serialisation.
- * One line in → one line out; stderr is free for diagnostic messages.
+ * One JSON line per message in each direction; newline-terminated.
+ * No stdin, stdout, or stderr is used.
  */
 
 #include "render_server.h"
@@ -12,8 +13,8 @@
 #include "../third_party/json.hpp"
 #include "sysex.h"
 
-#include <iostream>
 #include <string>
+#include <cstring>
 #include <filesystem>
 
 using json = nlohmann::json;
@@ -189,31 +190,106 @@ std::string RenderServer::handleLine(const std::string& line) {
     return err("unknown command: " + cmd).dump();
 }
 
-// ── run ───────────────────────────────────────────────────────────────────────
+// ── Socket helpers ────────────────────────────────────────────────────────────
 
-int RenderServer::run() {
-    // Signal readiness to the Python client
-    std::cout << json{{"status","ready"}}.dump() << "\n";
-    std::cout.flush();
-
-    std::string line;
-    while (std::getline(std::cin, line)) {
-        if (line.empty()) continue;
-
-        // Strip trailing carriage return (Windows line endings in mixed envs)
-        if (!line.empty() && line.back() == '\r')
-            line.pop_back();
-        if (line.empty()) continue;
-
-        const std::string resp = handleLine(line);
-        std::cout << resp << "\n";
-        std::cout.flush();
-
-        // Parse response to check for quit flag
-        try {
-            auto j = json::parse(resp);
-            if (j.value("quit", false)) break;
-        } catch (...) {}
+bool RenderServer::recvLine(sock_t fd, std::string& out) {
+    out.clear();
+    char c;
+    while (true) {
+#ifdef _WIN32
+        int n = ::recv(fd, &c, 1, 0);
+#else
+        ssize_t n = ::recv(fd, &c, 1, 0);
+#endif
+        if (n <= 0) return false;   // disconnect or error
+        if (c == '\n') return true;
+        if (c != '\r') out += c;
     }
+}
+
+bool RenderServer::sendAll(sock_t fd, const std::string& data) {
+    size_t sent = 0;
+    while (sent < data.size()) {
+#ifdef _WIN32
+        int n = ::send(fd, data.c_str() + sent, (int)(data.size() - sent), 0);
+        if (n == SOCKET_ERROR) return false;
+#else
+        ssize_t n = ::send(fd, data.c_str() + sent, data.size() - sent, 0);
+        if (n < 0) return false;
+#endif
+        sent += (size_t)n;
+    }
+    return true;
+}
+
+// ── runTCP ────────────────────────────────────────────────────────────────────
+
+int RenderServer::runTCP(int port) {
+#ifdef _WIN32
+    WSADATA wsa{};
+    if (::WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        if (logger_) logger_->log("RenderServer", LogSeverity::Error, "WSAStartup failed");
+        return 1;
+    }
+#endif
+
+    sock_t srv = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (!sock_valid(srv)) {
+        if (logger_) logger_->log("RenderServer", LogSeverity::Error, "socket() failed");
+        return 1;
+    }
+
+    // Allow immediate reuse after restart
+    int opt = 1;
+    ::setsockopt(srv, SOL_SOCKET, SO_REUSEADDR,
+                 reinterpret_cast<const char*>(&opt), sizeof(opt));
+
+    sockaddr_in addr{};
+    addr.sin_family      = AF_INET;
+    addr.sin_port        = htons(static_cast<uint16_t>(port));
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);   // 127.0.0.1 only
+
+    if (::bind(srv, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        if (logger_) logger_->log("RenderServer", LogSeverity::Error,
+                                   "bind() failed on port " + std::to_string(port));
+        sock_close(srv);
+        return 1;
+    }
+
+    ::listen(srv, 1);
+    if (logger_) logger_->log("RenderServer", LogSeverity::Info,
+                               "Listening on 127.0.0.1:" + std::to_string(port));
+
+    bool server_quit = false;
+    while (!server_quit) {
+        sock_t cli = ::accept(srv, nullptr, nullptr);
+        if (!sock_valid(cli)) break;
+
+        if (logger_) logger_->log("RenderServer", LogSeverity::Info, "Client connected");
+
+        // Greet the client
+        sendAll(cli, json{{"status", "ready"}}.dump() + "\n");
+
+        // Command loop for this connection
+        std::string line;
+        while (recvLine(cli, line)) {
+            if (line.empty()) continue;
+            const std::string resp = handleLine(line) + "\n";
+            if (!sendAll(cli, resp)) break;
+
+            try {
+                if (json::parse(resp).value("quit", false))
+                    { server_quit = true; break; }
+            } catch (...) {}
+        }
+
+        sock_close(cli);
+        if (logger_) logger_->log("RenderServer", LogSeverity::Info, "Client disconnected");
+    }
+
+    sock_close(srv);
+#ifdef _WIN32
+    ::WSACleanup();
+#endif
     return 0;
 }

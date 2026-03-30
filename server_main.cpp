@@ -1,23 +1,21 @@
 /*
  * server_main.cpp — IthacaRenderServer
  * ───────────────────────────────────────
- * Headless render server for Python training-loop IPC.
- * Communicates via stdin/stdout JSON protocol (one JSON object per line).
+ * Headless TCP render server for Python training-loop IPC.
  *
  * Usage:
- *   IthacaRenderServer [params.json] [--log <path>] [--no-log]
+ *   IthacaRenderServer [params.json] [--port <N>] [--log <path>] [--no-log]
  *
  *   params.json  — physics parameter table
  *                  (default: analysis/params-ks-grand.json)
+ *   --port <N>   — TCP port to listen on (default: 9876)
  *   --log <path> — write diagnostics to file
  *                  (default: analysis/runtime-logs/render-server.log)
  *   --no-log     — disable all logging
  *
- * stdout is reserved exclusively for the JSON protocol.
- * stderr is never written to — all diagnostics go to the log file.
- *
- * On startup, writes {"status":"ready"} to stdout.
- * Then reads commands from stdin until {"cmd":"quit"}.
+ * No stdin, stdout, or stderr is used.
+ * Client connects via TCP to 127.0.0.1:PORT after the process starts.
+ * Server sends {"status":"ready"} as the first line on each accepted connection.
  */
 
 #include "synth/render_server.h"
@@ -27,22 +25,20 @@
 #include <cstdio>
 
 int main(int argc, char* argv[]) {
-    // Unbuffered stdout — critical for line-by-line subprocess communication.
-    // stderr is intentionally never used.
-    setvbuf(stdout, nullptr, _IONBF, 0);
-
     std::string params_json = "analysis/params-ks-grand.json";
     std::string log_path    = "analysis/runtime-logs/render-server.log";
+    int         port        = 9876;
     bool        logging     = true;
 
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);
-        if (a == "--log" && i + 1 < argc) { log_path = argv[++i]; }
-        else if (a == "--no-log")         { logging = false; }
-        else if (a[0] != '-')             { params_json = a; }
+        if      (a == "--port"   && i + 1 < argc) { port     = std::stoi(argv[++i]); }
+        else if (a == "--log"    && i + 1 < argc) { log_path = argv[++i]; }
+        else if (a == "--no-log")                 { logging  = false; }
+        else if (a[0] != '-')                     { params_json = a; }
     }
 
-    // All diagnostics go to log file — stdout stays clean for the JSON protocol.
+    // All diagnostics go to log file — no stdout/stderr used.
     std::FILE* log_file = nullptr;
     if (logging) {
         try {
@@ -57,6 +53,7 @@ int main(int argc, char* argv[]) {
     };
 
     flog(("[IthacaRenderServer] params: " + params_json).c_str());
+    flog(("[IthacaRenderServer] port:   " + std::to_string(port)).c_str());
 
     try {
         Logger logger(".", log_file);
@@ -68,8 +65,8 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        flog("[IthacaRenderServer] ready");
-        int ret = server->run();
+        int ret = server->runTCP(port);
+        flog("[IthacaRenderServer] stopped");
         if (log_file) std::fclose(log_file);
         return ret;
 
