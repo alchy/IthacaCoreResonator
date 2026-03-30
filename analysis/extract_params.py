@@ -719,7 +719,13 @@ def analyze_bank(bank_dir: str, out_path: str,
                  verbose: bool = False,
                  midi_filter: int = None,
                  vel_filter: int = None,
-                 n_workers: int = None):
+                 n_workers: int = None,
+                 kick_threshold: float = 0.70):
+    """
+    kick_threshold: skip files whose duration is < this fraction of the
+    previously recorded duration for the same key (default 0.70 = −30%).
+    Catches accidentally short/kicked recordings without re-extracting them.
+    """
     bank_dir = Path(bank_dir)
     wav_files = sorted(bank_dir.glob("m*-vel*-f*.wav"))
 
@@ -727,8 +733,21 @@ def analyze_bank(bank_dir: str, out_path: str,
         print(f"No WAV files found in {bank_dir}")
         return None
 
-    # Build work list
+    # Load previous durations for kick detection (fast: just parse JSON, no audio)
+    prev_durations: dict = {}
+    if Path(out_path).exists():
+        try:
+            with open(out_path) as _f:
+                _prev = json.load(_f)
+            for _k, _v in _prev.get('samples', {}).items():
+                if isinstance(_v, dict) and _v.get('duration_s'):
+                    prev_durations[_k] = float(_v['duration_s'])
+        except Exception:
+            pass
+
+    # Build work list; skip kicked (unexpectedly short) files
     work = []
+    skipped_kicks = []
     for wav_path in wav_files:
         name = wav_path.stem
         parts = name.split('-')
@@ -741,7 +760,25 @@ def analyze_bank(bank_dir: str, out_path: str,
             continue
         if vel_filter is not None and vel != vel_filter:
             continue
+
+        key = f"m{midi:03d}_vel{vel}"
+        if key in prev_durations:
+            try:
+                cur_dur  = sf.info(str(wav_path)).duration
+                prev_dur = prev_durations[key]
+                if cur_dur < prev_dur * kick_threshold:
+                    skipped_kicks.append((wav_path.name, cur_dur, prev_dur))
+                    continue
+            except Exception:
+                pass  # can't stat → process normally
+
         work.append((str(wav_path), midi, vel))
+
+    if skipped_kicks:
+        print(f"Skipped {len(skipped_kicks)} kicked files "
+              f"(duration < {kick_threshold*100:.0f}% of previous):")
+        for fname, cur, prev in skipped_kicks:
+            print(f"  SKIP {fname}  {cur:.1f}s < {prev:.1f}s × {kick_threshold:.0f}")
 
     n_workers = n_workers or max(1, cpu_count() - 1)
     print(f"Found {len(wav_files)} samples, processing {len(work)} files "
