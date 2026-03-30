@@ -148,12 +148,12 @@ with RenderClient('build/bin/Release/IthacaRenderServer.exe',
 
 Vystup:
 ```
-A0  m021 vel3: 15.0s -> exports/sample_A0_vel3.wav   [1.41s]
-C3  m048 vel3: 11.5s -> exports/sample_C3_vel3.wav   [2.28s]
-C4  m060 vel3: 12.1s -> exports/sample_C4_vel3.wav   [2.75s]
-C6  m084 vel5:  1.0s -> exports/sample_C6_vel5.wav   [0.07s]
-C7  m096 vel5:  2.5s -> exports/sample_C7_vel5.wav   [0.09s]
-C8  m108 vel7:  7.9s -> exports/sample_C8_vel7.wav   [0.27s]
+A0  m021 vel3: 15.0s -> exports/sample_A0_vel3.wav   [~1.4s]
+C3  m048 vel3: 13.2s -> exports/sample_C3_vel3.wav   [~2.3s]
+C4  m060 vel3:  6.9s -> exports/sample_C4_vel3.wav   [~1.5s]
+C6  m084 vel5:  1.0s -> exports/sample_C6_vel5.wav   [~0.1s]
+C7  m096 vel5:  0.8s -> exports/sample_C7_vel5.wav   [~0.1s]
+C8  m108 vel7:  0.6s -> exports/sample_C8_vel7.wav   [~0.1s]
 ```
 
 **Velocity konvence:** render server pouziva velocity BAND 0-7 (odpovidaji trenovacim datum:
