@@ -38,26 +38,41 @@ MIDI note-on (midi, vel)
 
 ## Component Map
 
-### New (physics synth)
+### Synthesis core (shared across all targets)
 
 | File | Responsibility |
 |------|----------------|
-| `synth/note_params.h` | `PartialParams`, `NoteParams`, `NoteParamLUT` structs |
-| `synth/note_lut.h/.cpp` | Load `params.json` → `note_lut[88][8]` via nlohmann/json |
-| `synth/resonator_voice.h/.cpp` | Single voice: oscillators + envelope + EQ + stereo |
-| `synth/resonator_voice_simd.cpp` | AVX2-vectorized inner loop (optional, platform-specific) |
-| `synth/voice_manager.h/.cpp` | Polyphony pool (up to 88 voices), note-on/off, sustain pedal |
-| `synth/biquad_eq.h/.cpp` | Design + apply biquad cascade from log-spaced EQ gains |
+| `synth/note_params.h` | `PartialParams`, `NoiseParams`, `NoteParams`, `NoteLUT` structs |
+| `synth/note_lut.h/.cpp` | Load `params.json` → `NoteLUT[88][8]`, `interpolateNoteLayers()` |
+| `synth/resonator_voice.h/.cpp` | Single voice: oscillators + bi-exp envelope + EQ + stereo + pitch glide |
+| `synth/voice_manager.h/.cpp` | Polyphony pool (88 voices), note-on/off, sustain pedal, SynthConfig |
+| `synth/biquad_eq.h/.cpp` | 8-band peaking biquad cascade designed from 64-point EQ curve |
+| `synth/synth_config.h` | `SynthConfig` struct — 20 R/W parameters (vel, EQ, stereo, timbre) |
+| `synth/sysex.h/.cpp` | MIDI SysEx codec: SET_PARAM / SET_ALL / GET_PARAM / ALL_PARAMS_DUMP |
 
-### Reused from IthacaCore
+### Real-time playback (IthacaCoreResonator / GUI)
 
-| File | Notes |
-|------|-------|
-| `sampler/core_logger.h/.cpp` | RT-safe ring-buffer logger |
-| `dsp/dsp_effect.h` | Base DSP effect interface |
-| `dsp/dsp_chain.h/.cpp` | Serial DSP chain |
+| File | Responsibility |
+|------|----------------|
+| `synth/resonator_engine.h/.cpp` | miniaudio real-time audio callback, audio device management |
+| `synth/midi_input.h/.cpp` | RtMidi MIDI input callback, SysEx routing |
+| `dsp/dsp_chain.h/.cpp` | Serial DSP chain (BBE + limiter on master bus) |
 | `dsp/bbe/*` | BBE harmonic enhancer |
 | `dsp/limiter/*` | Soft limiter |
+
+### Offline render server (IthacaRenderServer)
+
+| File | Responsibility |
+|------|----------------|
+| `synth/offline_renderer.h/.cpp` | Headless note renderer; post-render RMS normalization |
+| `synth/render_server.h/.cpp` | TCP JSON dispatcher: render / set_config / get_config / sysex / reload |
+| `server_main.cpp` | Entry point, arg parsing, Logger init |
+
+### Shared infrastructure
+
+| File | Responsibility |
+|------|----------------|
+| `sampler/core_logger.h/.cpp` | RT-safe ring-buffer logger |
 
 ### Removed vs. IthacaCore
 
