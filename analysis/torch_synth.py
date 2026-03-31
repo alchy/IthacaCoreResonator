@@ -142,9 +142,13 @@ def render_note_differentiable(
 
     # ── Inharmonicity B → partial frequencies ─────────────────────────────────
     # f_k = k * f0 * sqrt(1 + B * k²)   [grad through B_net]
-    B      = torch.exp(model.forward_B(mf)).squeeze()     # scalar
+    # Clamp log_B to prevent B from growing large enough that f_hzs → inf,
+    # which causes cos(inf) = NaN and poisons the entire gradient.
+    # Grand piano B is physically in [1e-5, 0.01]; clamp(max=0) → B ≤ 1.0 is generous.
+    B      = torch.exp(model.forward_B(mf).clamp(max=0.0)).squeeze()  # scalar, B ≤ 1.0
     f_hzs  = k_vals * f0 * torch.sqrt(1.0 + B * k_vals ** 2)  # (K,)
-    valid  = (f_hzs < sr * 0.495).float().unsqueeze(1)    # (K, 1) mask
+    # isfinite guards against any remaining inf/nan before they enter cos()
+    valid  = ((f_hzs < sr * 0.495) & torch.isfinite(f_hzs)).float().unsqueeze(1)  # (K, 1)
 
     # ── Beat frequencies from df_net ──────────────────────────────────────────
     # df_net → log(beat_hz) per partial   [grad through df_net]
