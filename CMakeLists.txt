@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(IthacaCoreResonator VERSION 1.0.0 LANGUAGES CXX)
+project(IthacaCoreResonator VERSION 2.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,64 +28,63 @@ FetchContent_MakeAvailable(imgui)
 
 find_package(OpenGL REQUIRED)
 
-# ── Sources ────────────────────────────────────────────────────────────────────
-
-set(SYNTH_SOURCES
-    synth/note_lut.cpp
-    synth/resonator_voice.cpp
-    synth/voice_manager.cpp
-    synth/biquad_eq.cpp
-    synth/sysex.cpp
-    synth/resonator_engine.cpp
+# ── Core engine (no miniaudio, no audio device; shared across non-RT uses) ────
+# CoreEngine sources: registry + core abstraction + MIDI input
+set(CORE_ENGINE_SOURCES
+    synth/synth_core_registry.cpp
+    synth/core_engine.cpp       # contains MINIAUDIO_IMPLEMENTATION
     synth/midi_input.cpp
     third_party/RtMidi.cpp
 )
 
-# core_logger is header-only (no .cpp needed)
-set(LOGGER_SOURCES)
+# ── Available synth cores ─────────────────────────────────────────────────────
+# Each core lives in synth-core/<name>/ and self-registers via REGISTER_SYNTH_CORE.
+# Add new cores here as they are implemented.
+set(SINE_CORE_SOURCES
+    synth-core/sine/sine_core.cpp
+)
 
-# DSP chain: limiter + BBE + chain
+# Active core set for real-time targets (headless + GUI)
+# Switch this to include piano_core.cpp once implemented.
+set(RT_CORE_SOURCES
+    ${SINE_CORE_SOURCES}
+)
+
+# ── DSP chain ─────────────────────────────────────────────────────────────────
 set(DSP_SOURCES
     dsp/dsp_chain.cpp
     dsp/limiter/limiter.cpp
     dsp/bbe/bbe.cpp
 )
 
+# ── IthacaCoreResonator — headless real-time ──────────────────────────────────
+
 add_executable(IthacaCoreResonator
     main.cpp
-    ${SYNTH_SOURCES}
-    ${LOGGER_SOURCES}
+    ${CORE_ENGINE_SOURCES}
+    ${RT_CORE_SOURCES}
     ${DSP_SOURCES}
 )
 
-# ── Include paths ─────────────────────────────────────────────────────────────
-
 target_include_directories(IthacaCoreResonator PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/synth         # resonator_engine.h includes miniaudio.h
-    ${CMAKE_SOURCE_DIR}/third_party   # nlohmann/json.hpp, miniaudio.h
+    ${CMAKE_SOURCE_DIR}                 # project root (synth/, synth-core/, dsp/, …)
+    ${CMAKE_SOURCE_DIR}/synth           # for miniaudio.h, internal synth headers
+    ${CMAKE_SOURCE_DIR}/third_party     # nlohmann/json.hpp, RtMidi.h
 )
 
-# ── Platform dependencies (miniaudio + RtMidi) ────────────────────────────────
 if (WIN32)
     target_compile_definitions(IthacaCoreResonator PRIVATE __WINDOWS_MM__)
     target_link_libraries(IthacaCoreResonator PRIVATE ole32 winmm)
-
 elseif (APPLE)
     target_compile_definitions(IthacaCoreResonator PRIVATE __MACOSX_CORE__)
     target_link_libraries(IthacaCoreResonator PRIVATE
-        "-framework CoreAudio"
-        "-framework AudioToolbox"
-        "-framework CoreFoundation"
-        "-framework CoreMIDI")
-
-else()  # Linux
-    # MIDI backend: prefer JACK, fall back to ALSA
+        "-framework CoreAudio" "-framework AudioToolbox"
+        "-framework CoreFoundation" "-framework CoreMIDI")
+else()
     find_package(PkgConfig QUIET)
     if (PkgConfig_FOUND)
         pkg_check_modules(JACK QUIET jack)
     endif()
-
     if (JACK_FOUND)
         target_compile_definitions(IthacaCoreResonator PRIVATE __UNIX_JACK__)
         target_link_libraries(IthacaCoreResonator PRIVATE ${JACK_LIBRARIES})
@@ -93,11 +92,8 @@ else()  # Linux
         target_compile_definitions(IthacaCoreResonator PRIVATE __LINUX_ALSA__)
         target_link_libraries(IthacaCoreResonator PRIVATE asound)
     endif()
-
     target_link_libraries(IthacaCoreResonator PRIVATE pthread m dl)
 endif()
-
-# ── SIMD ─────────────────────────────────────────────────────────────────────
 
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64|X86_64")
     if (MSVC)
@@ -107,25 +103,19 @@ if (CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64|X86_64")
     endif()
 endif()
 
-# ── Compiler flags ────────────────────────────────────────────────────────────
-
 if (MSVC)
     target_compile_options(IthacaCoreResonator PRIVATE
-        $<$<CONFIG:Debug>:   /Od /Zi>
-        $<$<CONFIG:Release>: /O2 /DNDEBUG>
-    )
+        $<$<CONFIG:Debug>:/Od /Zi>
+        $<$<CONFIG:Release>:/O2 /DNDEBUG>)
     target_compile_definitions(IthacaCoreResonator PRIVATE
-        _CRT_SECURE_NO_WARNINGS
-        WIN32_LEAN_AND_MEAN
-    )
+        _CRT_SECURE_NO_WARNINGS WIN32_LEAN_AND_MEAN)
 else()
     target_compile_options(IthacaCoreResonator PRIVATE
-        $<$<CONFIG:Debug>:   -g -O0>
-        $<$<CONFIG:Release>: -O3 -DNDEBUG>
-    )
+        $<$<CONFIG:Debug>:-g -O0>
+        $<$<CONFIG:Release>:-O3 -DNDEBUG>)
 endif()
 
-# ── GUI target: IthacaCoreResonatorGUI ───────────────────────────────────────
+# ── IthacaCoreResonatorGUI ────────────────────────────────────────────────────
 
 set(IMGUI_DIR ${imgui_SOURCE_DIR})
 set(IMGUI_SOURCES
@@ -140,7 +130,8 @@ set(IMGUI_SOURCES
 add_executable(IthacaCoreResonatorGUI
     gui_main.cpp
     gui/resonator_gui.cpp
-    ${SYNTH_SOURCES}
+    ${CORE_ENGINE_SOURCES}
+    ${RT_CORE_SOURCES}
     ${DSP_SOURCES}
     ${IMGUI_SOURCES}
 )
@@ -153,7 +144,6 @@ target_include_directories(IthacaCoreResonatorGUI PRIVATE
     ${IMGUI_DIR}/backends
 )
 
-# Platform deps (same as headless)
 if (WIN32)
     target_compile_definitions(IthacaCoreResonatorGUI PRIVATE __WINDOWS_MM__)
     target_link_libraries(IthacaCoreResonatorGUI PRIVATE
@@ -190,22 +180,22 @@ endif()
 
 if (MSVC)
     target_compile_options(IthacaCoreResonatorGUI PRIVATE
-        $<$<CONFIG:Debug>:   /Od /Zi>
-        $<$<CONFIG:Release>: /O2 /DNDEBUG>
-    )
+        $<$<CONFIG:Debug>:/Od /Zi>
+        $<$<CONFIG:Release>:/O2 /DNDEBUG>)
     target_compile_definitions(IthacaCoreResonatorGUI PRIVATE
         _CRT_SECURE_NO_WARNINGS WIN32_LEAN_AND_MEAN)
 else()
     target_compile_options(IthacaCoreResonatorGUI PRIVATE
-        $<$<CONFIG:Debug>:   -g -O0>
-        $<$<CONFIG:Release>: -O3 -DNDEBUG>
-    )
+        $<$<CONFIG:Debug>:-g -O0>
+        $<$<CONFIG:Release>:-O3 -DNDEBUG>)
 endif()
 
-# ── IthacaRenderServer — headless offline renderer for training-loop IPC ──────
+# ── IthacaRenderServer — headless offline renderer ────────────────────────────
 #
-# Excludes resonator_engine.cpp (miniaudio device I/O) and midi_input.cpp
-# (RtMidi) — not needed for offline rendering.  No system audio libs required.
+# Still uses the legacy VoiceManager + OfflineRenderer path (no CoreEngine).
+# Will be migrated to ISynthCore once PianoCore is implemented.
+#
+# Deliberately excludes core_engine.cpp (no miniaudio needed for offline render).
 
 set(RENDER_SYNTH_SOURCES
     synth/note_lut.cpp
@@ -239,38 +229,33 @@ endif()
 
 if (MSVC)
     target_compile_options(IthacaRenderServer PRIVATE
-        $<$<CONFIG:Debug>:   /Od /Zi>
-        $<$<CONFIG:Release>: /O2 /DNDEBUG>
-    )
+        $<$<CONFIG:Debug>:/Od /Zi>
+        $<$<CONFIG:Release>:/O2 /DNDEBUG>)
     target_compile_definitions(IthacaRenderServer PRIVATE
         _CRT_SECURE_NO_WARNINGS WIN32_LEAN_AND_MEAN)
     target_link_libraries(IthacaRenderServer PRIVATE ws2_32)
 else()
     target_compile_options(IthacaRenderServer PRIVATE
-        $<$<CONFIG:Debug>:   -g -O0>
-        $<$<CONFIG:Release>: -O3 -DNDEBUG>
-    )
+        $<$<CONFIG:Debug>:-g -O0>
+        $<$<CONFIG:Release>:-O3 -DNDEBUG>)
     target_link_libraries(IthacaRenderServer PRIVATE pthread m dl)
 endif()
 
-# ── Copy soundbanks/ next to each executable ─────────────────────────────────
-#
-# soundbanks/ is always accessible at <exe_dir>/soundbanks/ regardless of
-# working directory. Copies happen after each build so new profiles are picked up.
+# ── Copy soundbanks/ next to each executable ──────────────────────────────────
 
 foreach(_target IthacaCoreResonator IthacaCoreResonatorGUI IthacaRenderServer)
     add_custom_command(TARGET ${_target} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_SOURCE_DIR}/soundbanks
             $<TARGET_FILE_DIR:${_target}>/soundbanks
-        COMMENT "Copying soundbanks/ -> $<TARGET_FILE_DIR:${_target}>/soundbanks"
+        COMMENT "Copying soundbanks/ -> ${_target}/soundbanks"
     )
 endforeach()
 
 # ── Custom targets ────────────────────────────────────────────────────────────
 
 add_custom_target(run
-    COMMAND IthacaCoreResonator --params soundbanks/salamander.json
+    COMMAND IthacaCoreResonator --core SineCore
     DEPENDS IthacaCoreResonator
     WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Release
 )

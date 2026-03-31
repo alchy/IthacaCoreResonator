@@ -1,19 +1,21 @@
 /*
  * midi_input.cpp
  * ───────────────
- * MIDI message parsing and routing to ResonatorEngine.
+ * MIDI message parsing and routing to CoreEngine.
  *
  * Handled messages:
  *   0x80 / 0x90  Note Off / Note On
  *   0xB0 CC 64   Sustain pedal
- *   0xB0 CC 7    Channel volume → setAllVoicesMasterGainMIDI
- *   0xB0 CC 10   Pan → setAllVoicesPanMIDI
- *   0xB0 CC 91   Reverb (LFO depth)
- *   0xB0 CC 93   Chorus (LFO speed)
+ *   0xB0 CC 7    Channel volume → setMasterGain
+ *   0xB0 CC 10   Pan → setMasterPan
+ *   0xB0 CC 91   LFO depth (Reverb)
+ *   0xB0 CC 93   LFO speed (Chorus)
+ *   0xB0 CC 74   Limiter threshold
+ *   0xF0         SysEx — TODO: map to core->setParam() when protocol is defined
  */
 
 #include "midi_input.h"
-#include "sysex.h"
+#include "core_engine.h"
 #include <stdexcept>
 #include <chrono>
 #include <cstdio>
@@ -38,7 +40,7 @@ std::vector<std::string> MidiInput::listPorts() {
 
 // ── open ──────────────────────────────────────────────────────────────────────
 
-bool MidiInput::open(ResonatorEngine& engine, int port_index) {
+bool MidiInput::open(CoreEngine& engine, int port_index) {
     close();
     try {
         midi_   = new RtMidiIn();
@@ -66,7 +68,7 @@ bool MidiInput::open(ResonatorEngine& engine, int port_index) {
     }
 }
 
-bool MidiInput::openVirtual(ResonatorEngine& engine, const std::string& name) {
+bool MidiInput::openVirtual(CoreEngine& engine, const std::string& name) {
     close();
     try {
         midi_   = new RtMidiIn();
@@ -102,37 +104,19 @@ void MidiInput::callback(double /*ts*/,
     auto* self = reinterpret_cast<MidiInput*>(user_data);
     if (!self->engine_) return;
 
-    uint8_t status  = (*msg)[0];
-    uint8_t data1   = (*msg)[1];
-    uint8_t data2   = (msg->size() > 2) ? (*msg)[2] : 0;
-    uint8_t type    = status & 0xF0;
+    uint8_t status = (*msg)[0];
+    uint8_t data1  = (*msg)[1];
+    uint8_t data2  = (msg->size() > 2) ? (*msg)[2] : 0;
+    uint8_t type   = status & 0xF0;
 
     uint64_t t = nowMs();
     self->activity_.any_ms.store(t, std::memory_order_relaxed);
 
-    // SysEx (F0) — ICR parameter protocol
+    // SysEx — TODO: implement generic setParam routing when core SysEx protocol defined
     if (status == 0xF0) {
-        Logger& logger = self->engine_->getLogger();
-        if (!sysexValidate(*msg)) {
-            logger.log("SYSEX", LogSeverity::Warning,
-                "Invalid SysEx (" + std::to_string(msg->size()) + " bytes) — ignored");
-            return;
-        }
-        uint8_t sxtype = (*msg)[5];
-        char typebuf[16];
-        std::snprintf(typebuf, sizeof(typebuf), "0x%02X", sxtype);
-        bool ok = sysexApply(*msg, self->engine_->getVoiceManager());
-        if (ok)
-            self->activity_.sysex_ms.store(t, std::memory_order_relaxed);
-        if (ok) {
-            logger.log("SYSEX", LogSeverity::Info,
-                std::string("Applied type=") + typebuf +
-                " (" + std::to_string(msg->size()) + " bytes)");
-        } else {
-            logger.log("SYSEX", LogSeverity::Warning,
-                std::string("Unhandled type=") + typebuf +
-                " (" + std::to_string(msg->size()) + " bytes)");
-        }
+        self->activity_.sysex_ms.store(t, std::memory_order_relaxed);
+        self->engine_->getLogger().log("MIDI", LogSeverity::Info,
+            "SysEx received (" + std::to_string(msg->size()) + " bytes) — not yet handled");
         return;
     }
 
@@ -154,14 +138,15 @@ void MidiInput::callback(double /*ts*/,
 
         case 0xB0:  // Control Change
             switch (data1) {
-                case 64:  self->activity_.pedal_ms.store(t, std::memory_order_relaxed);
-                          self->engine_->sustainPedal(data2);               break;
-                case 7:   self->engine_->setAllVoicesMasterGain(data2);     break;
-                case 10:  self->engine_->setAllVoicesPan(data2);            break;
-                case 93:  self->engine_->setAllVoicesPanSpeed(data2);       break;
-                case 91:  self->engine_->setAllVoicesPanDepth(data2);       break;
-                case 74:  self->engine_->setLimiterThreshold(data2);        break;
-                default:  break;
+                case 64: self->activity_.pedal_ms.store(t, std::memory_order_relaxed);
+                         self->engine_->sustainPedal(data2);                   break;
+                case 7:  self->engine_->setMasterGain(data2,
+                             self->engine_->getLogger());                       break;
+                case 10: self->engine_->setMasterPan(data2);                   break;
+                case 93: self->engine_->setPanSpeed(data2);                    break;
+                case 91: self->engine_->setPanDepth(data2);                    break;
+                case 74: self->engine_->setLimiterThreshold(data2);            break;
+                default: break;
             }
             break;
 

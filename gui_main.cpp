@@ -1,67 +1,88 @@
 /*
  * gui_main.cpp — IthacaCoreResonatorGUI
- * ────────────────────────────────────
+ * ───────────────────────────────────────
  * Usage:
- *   IthacaCoreResonatorGUI [--params <profile.json>] [--config <synthconfig.json>]
+ *   IthacaCoreResonatorGUI --core <name> [--params <file.json>]
+ *                          [--config <file.json>]
+ *                          [--core-param key=value ...]
  *   IthacaCoreResonatorGUI --help
  *
  * Options:
- *   --params <path>   Physics parameter profile JSON
- *                     (default: soundbanks/salamander.json)
- *   --config <path>   SynthConfig JSON — global parameters applied at startup
- *   --help            Show this help message
+ *   --core <name>          Synthesis core (default: SineCore)
+ *   --params <path>        Core parameter JSON
+ *   --config <path>        SynthConfig JSON applied via setParam
+ *   --core-param key=val   Override a core parameter (repeatable)
+ *   --list-cores           List registered cores and exit
+ *   --help                 Show this message
  */
-#include "synth/resonator_engine.h"
-#include "synth/synth_config_io.h"
+
+#include "synth/core_engine.h"
+#include "synth/synth_core_registry.h"
 #include "gui/resonator_gui.h"
+
+// Core registrations
+#include "synth-core/sine/sine_core.h"
+
 #include <string>
+#include <vector>
 #include <cstdlib>
 #include <cstdio>
 #include <memory>
 
 static void printHelp(const char* argv0) {
     std::fprintf(stdout,
-        "IthacaCoreResonatorGUI — Physics Piano Synthesizer (GUI)\n"
+        "IthacaCoreResonatorGUI — Pluggable Synthesizer (GUI)\n"
         "\n"
         "Usage:\n"
-        "  %s [--params <profile.json>] [--config <synthconfig.json>]\n"
+        "  %s --core <name> [--params <file>] [--config <file>]\n"
+        "             [--core-param key=value ...]\n"
+        "  %s --list-cores\n"
         "  %s --help\n"
         "\n"
         "Options:\n"
-        "  --params <path>   Physics parameter profile JSON\n"
-        "                    (default: soundbanks/salamander.json)\n"
-        "  --config <path>   SynthConfig JSON with global parameters\n"
-        "                    (beat_scale, noise_level, eq_strength, ...)\n"
-        "                    Applied at startup; can be overridden via GUI sliders.\n"
-        "  --help            Show this help message\n"
-        "\n"
-        "Soundbank files (place next to executable in soundbanks/):\n"
-        "  soundbanks/params-<bank>-nn.json              NN profile (after step 4)\n"
-        "  soundbanks/params-<bank>-ft.json              Finetuned profile (after step 5)\n"
-        "  soundbanks/params-<bank>-ft.synth_config.json Global SynthConfig\n",
-        argv0, argv0);
+        "  --core <name>          Synthesis core (default: SineCore)\n"
+        "  --params <path>        Core parameter JSON\n"
+        "  --config <path>        SynthConfig JSON applied via setParam\n"
+        "  --core-param key=val   Override a core parameter (repeatable)\n"
+        "  --list-cores           List registered cores and exit\n"
+        "  --help                 Show this message\n",
+        argv0, argv0, argv0);
 }
 
 int main(int argc, char* argv[]) {
     setvbuf(stdout, nullptr, _IONBF, 0);
 
-    std::string params_json = "soundbanks/salamander.json";
+    std::string core_name = "SineCore";
+    std::string params_json;
     std::string config_json;
-
-    if (argc == 1) {
-        printHelp(argv[0]);
-        return 0;
-    }
+    std::vector<std::pair<std::string,float>> core_params;
 
     for (int i = 1; i < argc; ++i) {
         std::string a(argv[i]);
         if (a == "--help" || a == "-h") {
             printHelp(argv[0]);
             return 0;
+        } else if (a == "--list-cores") {
+            for (const auto& c : SynthCoreRegistry::instance().availableCores())
+                std::fprintf(stdout, "  %s\n", c.c_str());
+            return 0;
+        } else if (a == "--core" && i + 1 < argc) {
+            core_name = argv[++i];
         } else if (a == "--params" && i + 1 < argc) {
             params_json = argv[++i];
         } else if (a == "--config" && i + 1 < argc) {
             config_json = argv[++i];
+        } else if (a == "--core-param" && i + 1 < argc) {
+            std::string kv(argv[++i]);
+            auto eq = kv.find('=');
+            if (eq != std::string::npos) {
+                core_params.emplace_back(kv.substr(0, eq),
+                                         std::stof(kv.substr(eq + 1)));
+            } else {
+                std::fprintf(stderr, "--core-param: expected key=value, got: %s\n",
+                             kv.c_str());
+                return 1;
+            }
         } else {
             std::fprintf(stderr, "Unknown option: %s\n\n", a.c_str());
             printHelp(argv[0]);
@@ -70,27 +91,21 @@ int main(int argc, char* argv[]) {
     }
 
     Logger logger(stdout, stdout);
-    logger.log("main", LogSeverity::Info, "=== IthacaCoreResonatorGUI STARTING ===");
+    logger.log("main", LogSeverity::Info,
+               "=== IthacaCoreResonatorGUI STARTING — " + core_name + " ===");
 
     try {
-        auto engine = std::make_unique<ResonatorEngine>();
-        if (!engine->initialize(params_json, logger)) {
+        auto engine = std::make_unique<CoreEngine>();
+        if (!engine->initialize(core_name, params_json, config_json, logger)) {
             logger.log("main", LogSeverity::Error, "Engine init failed");
             return 1;
         }
 
-        // Apply optional SynthConfig JSON before audio starts
-        if (!config_json.empty()) {
-            SynthConfig cfg = engine->getSynthConfig();
-            std::string err;
-            if (loadSynthConfig(config_json, cfg, &err)) {
-                engine->getVoiceManager().setSynthConfig(cfg);
-                logger.log("main", LogSeverity::Info,
-                           "SynthConfig loaded: " + config_json);
-            } else {
+        // Apply --core-param overrides
+        for (const auto& kv : core_params) {
+            if (!engine->core()->setParam(kv.first, kv.second))
                 logger.log("main", LogSeverity::Warning,
-                           "SynthConfig load failed: " + err);
-            }
+                           "Unknown core param: " + kv.first);
         }
 
         if (!engine->start()) {
@@ -98,10 +113,11 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        int ret = runResonatorGui(*engine, logger, params_json);
+        int ret = runResonatorGui(*engine, logger);
 
         engine->stop();
-        logger.log("main", LogSeverity::Info, "=== IthacaCoreResonatorGUI STOPPED ===");
+        logger.log("main", LogSeverity::Info,
+                   "=== IthacaCoreResonatorGUI STOPPED ===");
         return ret;
 
     } catch (const std::exception& e) {

@@ -1,0 +1,17 @@
+Loading model: analysis/profile-finetuned.pt
+  hidden=64, parameters=99,214
+Scanning bank: C:/SoundBanks/IthacaPlayer/ks-grand  pattern=m*-vel*-f44.wav
+  Found 704 WAV files
+Loading references (duration=3.0s, sr=44100 Hz) …
+  Loaded 704 notes
+
+── Global SynthConfig optimisation ──
+  opt_params: ['beat_scale', 'noise_level']
+  initial beat_scale=1.000, noise_level=1.000
+[epoch   10/100] loss=5.0284  beat_scale=0.9660  noise_level=1.0028  lr=4.879e-02
+[epoch   20/100] loss=5.0263  beat_scale=0.9932  noise_level=0.8809  lr=4.527e-02
+[epoch   30/100] loss=5.0274  beat_scale=1.0679  noise_level=1.0470  lr=3.980e-02
+[epoch   40/100] loss=5.0268  beat_scale=1.0001  noise_level=1.0046  lr=3.290e-02
+[epoch   50/100] loss=5.0271  beat_scale=0.9857  noise_level=0.9847  lr=2.525e-02
+[epoch   60/100] loss=5.0278  beat_scale=0.9863  noise_level=0.9365  lr=1.760e-02
+[epoch   70/100] loss=5.0261  beat_scale=0.9957  noise_level=0.9598  lr=1.070e-02

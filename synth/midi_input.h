@@ -3,15 +3,19 @@
  * midi_input.h
  * ─────────────
  * Cross-platform MIDI input via RtMidi.
- * Receives note-on/off, sustain pedal, and passes them to ResonatorEngine.
+ * Receives note-on/off, sustain pedal, and passes events to CoreEngine.
+ *
+ * CoreEngine is forward-declared to avoid circular inclusion
+ * (core_engine.cpp includes midi_input.h).
  */
 
 #include "../third_party/RtMidi.h"
-#include "resonator_engine.h"
 #include <string>
 #include <vector>
 #include <atomic>
 #include <cstdint>
+
+class CoreEngine;
 
 // ── MIDI activity timestamps (updated from callback thread, read from GUI) ────
 // Each field holds the steady_clock millisecond timestamp of the last event.
@@ -33,10 +37,10 @@ public:
     static std::vector<std::string> listPorts();
 
     // Open port by index (0 = first available). Returns false if none found.
-    bool open(ResonatorEngine& engine, int port_index = 0);
+    bool open(CoreEngine& engine, int port_index = 0);
 
     // Open virtual port (macOS/Linux — allows DAW to send MIDI)
-    bool openVirtual(ResonatorEngine& engine, const std::string& name = "IthacaCoreResonator");
+    bool openVirtual(CoreEngine& engine, const std::string& name = "IthacaCoreResonator");
 
     void close();
     bool isOpen() const { return midi_ && midi_->isPortOpen(); }
@@ -50,8 +54,8 @@ private:
                          std::vector<unsigned char>* msg,
                          void* user_data);
 
-    RtMidiIn*       midi_      = nullptr;
-    ResonatorEngine* engine_   = nullptr;
-    std::string     port_name_;
-    MidiActivity    activity_;
+    RtMidiIn*   midi_    = nullptr;
+    CoreEngine* engine_  = nullptr;
+    std::string port_name_;
+    MidiActivity activity_;
 };
