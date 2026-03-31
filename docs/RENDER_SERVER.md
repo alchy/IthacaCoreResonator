@@ -106,7 +106,7 @@ názvům fieldů v `SynthConfig` (viz `docs/SYSEX.md` — tabulka R/W parametrů
 → {"cmd":"get_config"}
 ← {"status":"ok","params":{"beat_scale":1.0,"pan_spread":0.55,...}}
 ```
-Vrátí kompletní `SynthConfig` jako JSON objekt (19 R/W parametrů).
+Vrátí kompletní `SynthConfig` jako JSON objekt (20 R/W parametrů).
 
 #### `sysex`
 ```json
@@ -160,7 +160,7 @@ with RenderClient("build/bin/Release/IthacaRenderServer.exe",
 
     rc.ping()
     rc.set_config(beat_scale=1.5, harmonic_brightness=0.5)
-    cfg = rc.get_config()          # dict se všemi 19 parametry
+    cfg = rc.get_config()          # dict se všemi 20 parametry
 
     # vel = velocity band 0-7
     n = rc.render(midi=60, vel=3, duration=0.0,   # duration=0 → auto-detect

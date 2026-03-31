@@ -230,7 +230,7 @@ SysEx callback loguje přes `Logger` (stdout v interaktivním režimu, stderr s 
 
 ```
 [INF][SYSEX] Applied type=0x01 (15 bytes)    — SET_PARAM OK
-[INF][SYSEX] Applied type=0x04 (159 bytes)   — SET_ALL OK
+[INF][SYSEX] Applied type=0x04 (167 bytes)   — SET_ALL OK
 [WRN][SYSEX] Unhandled type=0x02 (10 bytes)  — GET_PARAM (žádný MIDI výstup)
 [WRN][SYSEX] Unhandled type=0x05 (7 bytes)   — REQUEST_ALL (žádný MIDI výstup)
 [WRN][SYSEX] Invalid SysEx (10 bytes) — ignored  — špatný MFR/SIG

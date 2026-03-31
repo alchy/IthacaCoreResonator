@@ -97,21 +97,39 @@ Log: `analysis/runtime-logs/train-profile-log.txt`
 ### 5. MRSTFT fine-tuning (volitelný)
 
 ```bash
-# Fine-tuning NN vah
+# Fine-tuning NN vah (doporučené parametry — k-max=40 snižuje paměť a čas)
 python analysis/closed_loop_finetune.py \
-    --mode finetune \
-    --model analysis/profile.pt \
-    --bank  "C:/SoundBanks/IthacaPlayer/ks-grand" \
-    --epochs 200 --lr 3e-4
+    --mode         finetune \
+    --model        analysis/profile.pt \
+    --out          analysis/profile-finetuned.pt \
+    --bank         "C:/SoundBanks/IthacaPlayer/ks-grand" \
+    --epochs       200 --lr 3e-4 --batch-size 8 \
+    --eval-every   20 \
+    --k-max        40 --duration 3.0 \
+    --render-dir   exports/finetune-samples \
+    --sample-notes "21:3,48:3,60:3,84:5,96:5,108:7" \
+    --log          analysis/runtime-logs/finetune.log
 
-# Globální SynthConfig optimalizace (beat_scale, noise_level)
+# Globální SynthConfig optimalizace (beat_scale, noise_level) — spustit po finetuning
 python analysis/closed_loop_finetune.py \
     --mode global \
-    --model analysis/profile.pt \
+    --model analysis/profile-finetuned.pt \
     --bank  "C:/SoundBanks/IthacaPlayer/ks-grand" \
     --opt-params beat_scale,noise_level \
-    --epochs 100 --lr 0.05
+    --epochs 100 --lr 0.05 \
+    --log    analysis/runtime-logs/finetune-global.log
 ```
+
+Výstup `--render-dir` ukládá WAV vzorky per checkpoint:
+```
+exports/finetune-samples/
+    epoch-0000/   m021_vel3.wav  m048_vel3.wav  m060_vel3.wav
+                  m084_vel5.wav  m096_vel5.wav  m108_vel7.wav
+    epoch-0020/   ...
+    epoch-0200/   ...
+```
+
+**Rychlost** (k-max=40, CPU i5-12th gen): eval 704 not ~1 min, epocha ~2–3 min, cely run ~7–10h.
 
 ---
 
@@ -162,7 +180,8 @@ MIDI klaviatura (0–127) se mapuje automaticky ve VoiceManageru.
 | `server_main.cpp` | Render server entry point |
 | `analysis/params-ks-grand.json` | Naměřená banka (704 samplov) |
 | `analysis/params-nn-profile-ks-grand.json` | NN-smoothed profil (88×8) |
-| `analysis/profile.pt` | Natrénovaný model (state_dict, hidden, eq_freqs) |
+| `analysis/profile.pt` | Natrénovaný model — EQ-supervised (krok 4) |
+| `analysis/profile-finetuned.pt` | Doladěný model po MRSTFT fine-tuningu (krok 5) |
 
 ---
 

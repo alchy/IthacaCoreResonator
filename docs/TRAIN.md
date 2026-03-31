@@ -441,14 +441,18 @@ with RenderClient(...) as rc:
 
 ### Rychlost (CPU, i5-12th gen)
 
-- 1 gradient krok (1 nota, k_max=40, duration=3s): ~0.5 s
-- 1 epocha (704 not, batch=8): ~6 min (88 kroku x ~4s)
-- Plny eval (704 not, no grad): ~2.5 min
-- Cely run (200 epoch + 10 evalu): ~23 hodin
+Merenou na run s `--k-max 40 --duration 3.0 --batch-size 8`:
+
+- 1 gradient krok (batch 8 not, k_max=40, duration=3s): ~15–20 s
+- 1 epocha (704 not, batch=8): ~2–3 min (88 kroku)
+- Plny eval (704 not, no grad): ~1 min
+- Cely run (200 epoch + 10 evalu): ~7–10 hodin
+
+S vychozim `--k-max 60` (bez explicitniho omezeni) je cas ~2× vyssi (vice parcialu).
 
 **Doporuceni pro rychlejsi run:**
 ```bash
-# Kratsi vzorky + mene parcialu = ~3x rychlejsi
+# Kratsi vzorky + mene parcialu = ~3-4x rychlejsi
 python analysis/closed_loop_finetune.py \
     --mode finetune \
     --model analysis/profile.pt \
@@ -456,7 +460,7 @@ python analysis/closed_loop_finetune.py \
     --duration 1.5 \
     --k-max    20 \
     --epochs   100
-# 1 epocha: ~1.5 min, cely run: ~4 hod
+# 1 epocha: ~45 s, cely run: ~2 hod
 ```
 
 ### Gradient path (co se uci)
@@ -570,7 +574,8 @@ build/bin/Release/IthacaRenderServer.exe \
 |---|---|---|
 | `analysis/params-<banka>.json` | namere fizikalni parametry | extract_params.py |
 | `analysis/params-nn-profile-<banka>.json` | NN-smoothed profil (88x8) | train_instrument_profile.py |
-| `analysis/profile-<banka>.pt` | vahy surrogate modelu (99 214 params) | train_instrument_profile.py |
+| `analysis/profile.pt` | vahy surrogate modelu (99 214 params) | train_instrument_profile.py |
+| `analysis/profile-finetuned.pt` | doladeny model po MRSTFT fine-tuningu | closed_loop_finetune.py |
 | `analysis/profile.synth_config.json` | optimalizovane SynthConfig (global mode) | closed_loop_finetune.py |
 | `build/bin/Release/IthacaRenderServer.exe` | headless render server | cmake --build |
 | `exports/*.wav` | renderovane vzorky | IthacaRenderServer / finetune |
@@ -621,6 +626,39 @@ python analysis/closed_loop_finetune.py \
     ... \
     --k-max 20 --duration 1.5
 ```
+
+### MRSTFT finetune: loss = NaN po epochach 80-130
+
+**Projev:** loss klesa normalne do epochy ~80-100, pak narazove skoci na NaN a zustava NaN.
+Vzorky z epochy pred NaN znejo normalne; vzorky v epose NaN obsahuji 100% NaN vzorky
+("sumovy vystrel — ticho — sumovy vystrel").
+
+**Pricina (B_net → cos(∞) → NaN):**
+
+```
+B_net vystup drift → velke log_B
+→ B = exp(velke) → f_hzs = ∞ pro vysoke k
+→ valid maska = 0 (nad Nyquistem)
+→ ale NaN × 0 = NaN v IEEE 754
+→ cos(∞) = NaN → celý audio tensor NaN
+→ MRSTFT loss = NaN → gradient = NaN → permanentni NaN
+```
+
+**Oprava (uz aplikovana v `analysis/torch_synth.py`):**
+
+```python
+# Clamp log_B pred exp():
+B = torch.exp(model.forward_B(mf).clamp(max=0.0)).squeeze()  # B ≤ 1.0
+
+# isfinite guard ve valid masce:
+valid = ((f_hzs < sr * 0.495) & torch.isfinite(f_hzs)).float().unsqueeze(1)
+```
+
+Grand piano B je fyzikalne v [1e-5, 0.01]. Clamp na max=0.0 dovoluje B ≤ 1.0 — dostatecna
+rezerva pro trening, zaroven zamezuje f_hzs → ∞.
+
+Kdyz NaN uz nastalo, je nutne zacit znovu od checkpointu pred epochou exploze (nebo od
+zakladniho `profile.pt`). Model po NaN explozi nema zachranitelne vahy.
 
 ### UnicodeEncodeError na Windows (cp1252)
 
