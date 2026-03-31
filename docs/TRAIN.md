@@ -387,10 +387,15 @@ python analysis/closed_loop_finetune.py \
     --lr           3e-4 \
     --batch-size   8 \
     --eval-every   20 \
+    --k-max        40 \
+    --duration     3.0 \
     --render-dir   exports/finetune-samples \
-    --sample-notes "21:3,48:3,60:3,84:5,96:5" \
+    --sample-notes "21:3,48:3,60:3,84:5,96:5,108:7" \
     --log          analysis/runtime-logs/finetune.log
 ```
+
+`--sample-notes`: format `"midi:vel,midi:vel,..."` — zachycuje bas (21), stred (48,60),
+diskant (84), treble forte (96,108). Ulozi se pro kazdy eval checkpoint.
 
 **`--render-dir`**: pri kazdem eval checkpointu ulozi WAV vzorky via proxy synth:
 ```
@@ -401,6 +406,7 @@ exports/finetune-samples/
         m060_vel3.wav   # stredni C
         m084_vel5.wav   # C6 forte
         m096_vel5.wav   # C7 forte
+        m108_vel7.wav   # C8 fff
     epoch-0020/
         ...
     epoch-0200/
@@ -415,7 +421,7 @@ Gradienty tecou pres `torch_synth.render_note_differentiable()` → MRSTFT.
 ```bash
 python analysis/closed_loop_finetune.py \
     --mode global \
-    --model analysis/profile.pt \
+    --model analysis/profile-finetuned.pt \
     --bank  "C:/SoundBanks/IthacaPlayer/ks-grand" \
     --opt-params beat_scale,noise_level \
     --epochs 100 \
