@@ -15,3 +15,11 @@ Loading references (duration=3.0s, sr=44100 Hz) …
 [epoch   50/100] loss=5.0271  beat_scale=0.9857  noise_level=0.9847  lr=2.525e-02
 [epoch   60/100] loss=5.0278  beat_scale=0.9863  noise_level=0.9365  lr=1.760e-02
 [epoch   70/100] loss=5.0261  beat_scale=0.9957  noise_level=0.9598  lr=1.070e-02
+[epoch   80/100] loss=5.0270  beat_scale=0.9858  noise_level=0.9826  lr=5.227e-03
+[epoch   90/100] loss=5.0267  beat_scale=0.9771  noise_level=0.9706  lr=1.711e-03
+[epoch  100/100] loss=5.0271  beat_scale=0.9847  noise_level=0.9766  lr=5.000e-04
+
+── Best SynthConfig (MRSTFT=5.0254) ──
+  beat_scale: 1.001311
+  noise_level: 0.960994
+Saved config: analysis\profile-finetuned.synth_config.json
