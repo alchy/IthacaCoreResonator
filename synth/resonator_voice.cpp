@@ -4,22 +4,24 @@
  * Single-voice additive physics synthesis.
  * Designed for full parity with analysis/physics_synth.py synthesize_note().
  *
- * Signal chain (per block):
+ * Signal chain (per block) — matches Python physics_synth.py exactly:
  *   1. Oscillator sum, per-string equal-power panning, /n_strings normalisation
- *   2. Noise — independent L and R channels (unlike earlier mono version)
- *   3. Onset ramp (onset_ms linear fade-in to prevent click)
+ *   2. Longitudinal precursor (bass only, MIDI < 50)
+ *   3. Noise — independent L and R channels
  *   4. Release ramp
- *   5. BiquadEQ (spectral correction, flat below eq_freq_min)
- *   6. Schroeder all-pass stereo decorrelation (opposite sign g per channel)
+ *   5. Schroeder all-pass stereo decorrelation  ← BEFORE EQ (matches Python)
+ *   6. BiquadEQ (spectral correction, flat below eq_freq_min)
  *   7. M/S stereo width (width_factor * stereo_boost)
- *   8. Accumulate into output buffers
+ *   8. Onset ramp  ← LAST step (matches Python)
+ *   9. Accumulate into output buffers
  *
  * Python divergences fixed:
  *   - Amplitude: divide by n_strings (Python /2 or /3 for multi-string)
  *   - Envelope:  mono partials use single-exp (not bi-exp)
  *   - Noise:     independent L/R; LP coeff matches Python 1-exp(-2π·fc/sr)
- *   - Onset:     3 ms linear ramp (Python onset_ms=3.0)
- *   - EQ:        freq_min fade-out (Python eq_freq_min=400 Hz)
+ *   - Onset:     3 ms linear ramp, applied LAST after decorr+EQ+M/S (Python order)
+ *   - EQ:        freq_min fade-out (Python eq_freq_min=400 Hz), applied AFTER decorr
+ *   - Decorrelation: applied BEFORE EQ (Python: decorr → EQ → M/S → onset)
  *   - pan_spread: from SynthConfig (was hardcoded 0.55)
  *   - beat_scale: from SynthConfig (was always 1.0)
  */
@@ -339,13 +341,42 @@ void ResonatorVoice::processBlock(float* out_l, float* out_r, int n_samples) {
     }
 
 apply_post:
-    // ── Spectral EQ ───────────────────────────────────────────────────────────
+    // ── Step 1: Schroeder all-pass decorrelation (BEFORE EQ — matches Python) ─
+    // Python physics_synth.py applies decorr at line ~391, before EQ at ~416.
+    // The blend  L = L*(1-ds) + allpass(L)*ds  references the pre-EQ signal,
+    // so ordering matters even though all-pass has unit gain at all frequencies.
+    if (ap_strength_ > 1e-4f) {
+        for (int s = 0; s < n; s++) {
+            float l = vl[s], r = vr[s];
+            // y[n] = -g*x[n] + x[n-1] - g*y[n-1]  (matches scipy lfilter([-g,1],[1,g]))
+            float yl = -ap_g_l_ * l + ap_x_l_ - ap_g_l_ * ap_y_l_;
+            float yr = -ap_g_r_ * r + ap_x_r_ - ap_g_r_ * ap_y_r_;
+            ap_x_l_ = l; ap_y_l_ = yl;
+            ap_x_r_ = r; ap_y_r_ = yr;
+            vl[s] = l * (1.f - ap_strength_) + yl * ap_strength_;
+            vr[s] = r * (1.f - ap_strength_) + yr * ap_strength_;
+        }
+    }
+
+    // ── Step 2: Spectral EQ (after decorr — matches Python) ───────────────────
     eq_l_.processBlock(vl, n);
     eq_r_.processBlock(vr, n);
 
-    // ── Onset ramp (Python: applied AFTER EQ and width, click prevention) ────
-    // Applied here post-EQ (before decorrelation) to match Python's order:
-    //   synthesize → rms_norm → EQ → rms_norm → width → rms_norm → onset_ramp
+    // ── Step 3: M/S stereo width (after EQ — matches Python) ──────────────────
+    {
+        const float eff   = width_factor_ * stereo_boost_;
+        const float wl_ms = 0.5f * (1.f + eff);
+        const float wr_ms = 0.5f * (1.f - eff);
+        for (int s = 0; s < n; s++) {
+            float l = vl[s], r = vr[s];
+            vl[s] = l * wl_ms + r * wr_ms;
+            vr[s] = r * wl_ms + l * wr_ms;
+        }
+    }
+
+    // ── Step 4: Onset ramp — LAST step, after all stereo processing ───────────
+    // Python physics_synth.py line ~439: applied after EQ, width, and decorr.
+    // stereo[:n_onset] *= linspace(0,1,n_onset)
     if (in_onset_) {
         for (int s = 0; s < n; s++) {
             vl[s] *= onset_gain_;
@@ -353,30 +384,12 @@ apply_post:
             onset_gain_ += onset_step_;
             if (onset_gain_ >= 1.f) { onset_gain_ = 1.f; in_onset_ = false; break; }
         }
-        // If onset ended mid-block, remaining samples are already at full gain
     }
 
-    // ── Decorrelation + M/S width → accumulate into output ───────────────────
-    const bool  do_ap = (ap_strength_ > 1e-4f);
-    const float eff   = width_factor_ * stereo_boost_;  // effective M/S side gain
-    const float wl_ms = 0.5f * (1.f + eff);
-    const float wr_ms = 0.5f * (1.f - eff);
-
+    // ── Step 5: Accumulate into output ────────────────────────────────────────
     for (int s = 0; s < n; s++) {
-        float l = vl[s], r = vr[s];
-
-        if (do_ap) {
-            // y[n] = -g*x[n] + x[n-1] - g*y[n-1]
-            float yl = -ap_g_l_ * l + ap_x_l_ - ap_g_l_ * ap_y_l_;
-            float yr = -ap_g_r_ * r + ap_x_r_ - ap_g_r_ * ap_y_r_;
-            ap_x_l_ = l; ap_y_l_ = yl;
-            ap_x_r_ = r; ap_y_r_ = yr;
-            l = l * (1.f - ap_strength_) + yl * ap_strength_;
-            r = r * (1.f - ap_strength_) + yr * ap_strength_;
-        }
-
-        out_l[s] += l * wl_ms + r * wr_ms;
-        out_r[s] += r * wl_ms + l * wr_ms;
+        out_l[s] += vl[s];
+        out_r[s] += vr[s];
     }
 
     sample_idx_ += n;
