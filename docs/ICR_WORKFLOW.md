@@ -1,6 +1,6 @@
-# Tréninkový workflow — quickstart
+# IthacaCoreResonator — workflow quickstart
 
-Stručný přehled. Kompletní dokumentace v `docs/TRAIN.md`.
+Stručný přehled od WAV banky po živé hraní. Kompletní dokumentace v `docs/TRAIN.md`.
 
 ---
 
@@ -16,11 +16,99 @@ WAV banka  (m060-vel3-f44.wav, vel = 0-7)
     ▼  compute_spectral_eq.py   LTASE spektrální EQ křivka
     │
     ▼  train_instrument_profile.py    surrogate NN (99 214 params)
+    │                                 → profile.pt
+    │                                 → params-nn-profile-<banka>.json
     │
-    ▼  closed_loop_finetune.py        MRSTFT fine-tuning (volitelný)
+    ▼  closed_loop_finetune.py --mode finetune   (volitelný)
+    │                                 → profile-finetuned.pt
     │
-    ▼  IthacaRenderServer.exe  +  params-nn-profile-<banka>.json
+    ▼  closed_loop_finetune.py --mode global     (volitelný)
+    │                                 → profile.synth_config.json
+    │
+    ▼  IthacaCoreResonatorGUI.exe  params-nn-profile-<banka>.json
+       IthacaCoreResonator.exe     (headless)
+       IthacaRenderServer.exe      (offline rendering)
 ```
+
+---
+
+## Spuštění syntezátoru
+
+### GUI (primární)
+
+```bat
+build\bin\Release\IthacaCoreResonatorGUI.exe analysis\params-nn-profile-ks-grand.json
+```
+
+GUI obsahuje:
+- Piano vizualizaci a voice matrix
+- Panel SynthConfig s live sliders (beat_scale, eq_strength, noise_level, ...)
+- Peak metering, SysEx LED indikátor
+- Klávesová fallback: viz CLI níže
+
+### CLI (headless — bez GUI)
+
+```bat
+build\bin\Release\IthacaCoreResonator.exe [params.json] [midi_port]
+```
+
+| Argument | Výchozí | Popis |
+|---|---|---|
+| `params.json` | `soundbanks/salamander.json` | Physics parameter tabulka |
+| `midi_port` | `0` | Index MIDI vstupu (0 = první dostupný) |
+
+Dostupné MIDI porty jsou vypsány při startu:
+```
+[INF][MIDI] port [0] loopMIDI Port
+[INF][MIDI] port [1] Arturia KeyLab
+```
+
+**Klávesová fallback** (bez MIDI hardware):
+```
+a s d f g h j k   →   C4 D4 E4 F4 G4 A4 B4 C5
+z                 →   sustain pedal (toggle)
+q                 →   quit
+```
+
+### Parametry při spuštění s NN profilem
+
+Po tréninku a fine-tuning použij `params-nn-profile-ks-grand.json` místo výchozího `soundbanks/salamander.json`:
+
+```bat
+:: GUI
+build\bin\Release\IthacaCoreResonatorGUI.exe analysis\params-nn-profile-ks-grand.json
+
+:: CLI s druhým MIDI portem
+build\bin\Release\IthacaCoreResonator.exe analysis\params-nn-profile-ks-grand.json 1
+```
+
+### Aplikace optimalizovaného SynthConfig
+
+Po `--mode global` vznikne `profile.synth_config.json` s hodnotami `beat_scale` a `noise_level`.
+Tyto hodnoty lze aplikovat přes SysEx (Python helper) nebo ručně v GUI:
+
+```python
+import json
+from analysis.render_client import RenderClient
+
+cfg = json.load(open("analysis/profile.synth_config.json"))
+# cfg = {"beat_scale": 1.23, "noise_level": 0.88}
+
+# Via RenderServer (offline / testování):
+with RenderClient("build/bin/Release/IthacaRenderServer.exe",
+                  "analysis/params-nn-profile-ks-grand.json") as rc:
+    rc.set_config(**cfg)
+
+# Via SysEx na živý ICR (loopMIDI):
+from analysis.sysex_test import build_set_param, PARAMS, open_port
+midi = open_port(0)
+for name, value in cfg.items():
+    pid = PARAMS[name][0]
+    midi.send_message(build_set_param(pid, float(value)))
+midi.close_port()
+```
+
+Parametry lze také nastavit přímo v GUI pomocí sliderů (panel vpravo).
 
 ---
 
@@ -37,11 +125,12 @@ python analysis/train_pipeline.py \
     --start-at 4 \
     --epochs 1800
 
-# S MRSTFT fine-tuningem
+# S MRSTFT fine-tuningem a WAV checkpointy
 python analysis/train_pipeline.py \
     --bank "C:/SoundBanks/IthacaPlayer/ks-grand" \
     --start-at 4 \
-    --finetune --ft-epochs 200
+    --finetune --ft-epochs 200 \
+    --ft-render-dir exports/finetune-samples
 ```
 
 ---
@@ -120,16 +209,16 @@ python analysis/closed_loop_finetune.py \
     --log    analysis/runtime-logs/finetune-global.log
 ```
 
-Výstup `--render-dir` ukládá WAV vzorky per checkpoint:
+Výstup `--render-dir` ukládá WAV vzorky per checkpoint (timestamp přidán automaticky):
 ```
-exports/finetune-samples/
+exports/finetune-samples-20260331-0810/
     epoch-0000/   m021_vel3.wav  m048_vel3.wav  m060_vel3.wav
                   m084_vel5.wav  m096_vel5.wav  m108_vel7.wav
     epoch-0020/   ...
     epoch-0200/   ...
 ```
 
-**Rychlost** (k-max=40, CPU i5-12th gen): eval 704 not ~1 min, epocha ~2–3 min, cely run ~7–10h.
+**Rychlost** (k-max=40, CPU i5-12th gen): eval 704 not ~1 min, epocha ~2–3 min, celý run ~7–10h.
 
 ---
 
@@ -174,15 +263,17 @@ MIDI klaviatura (0–127) se mapuje automaticky ve VoiceManageru.
 | `analysis/torch_synth.py` | Diferenciabilní proxy synth (2-string per parcial) |
 | `analysis/closed_loop_finetune.py` | MRSTFT fine-tuning + global SynthConfig opt |
 | `analysis/render_client.py` | Python wrapper pro render server |
+| `analysis/sysex_test.py` | SysEx test helper + codec verifikace |
 | `analysis/physics_synth.py` | Python reference implementace fyziky |
 | `synth/offline_renderer.h/.cpp` | Headless C++ renderer |
 | `synth/render_server.h/.cpp` | TCP JSON render server |
 | `server_main.cpp` | Render server entry point |
 | `analysis/params-ks-grand.json` | Naměřená banka (704 samplov) |
-| `analysis/params-nn-profile-ks-grand.json` | NN-smoothed profil (88×8) |
+| `analysis/params-nn-profile-ks-grand.json` | NN-smoothed profil (88×8) — vstup pro ICR |
 | `analysis/profile.pt` | Natrénovaný model — EQ-supervised (krok 4) |
 | `analysis/profile-finetuned.pt` | Doladěný model po MRSTFT fine-tuningu (krok 5) |
+| `analysis/profile.synth_config.json` | Optimalizovaný SynthConfig (beat_scale, noise_level) |
 
 ---
 
-Detailní dokumentace: **[docs/TRAIN.md](TRAIN.md)**
+Detailní dokumentace: **[docs/TRAIN.md](TRAIN.md)** | **[docs/SYSEX.md](SYSEX.md)** | **[docs/RENDER_SERVER.md](RENDER_SERVER.md)**
