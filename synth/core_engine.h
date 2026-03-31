@@ -62,6 +62,7 @@ public:
     void noteOn      (uint8_t midi, uint8_t velocity);
     void noteOff     (uint8_t midi);
     void sustainPedal(uint8_t val);  // >=64 = down
+    void allNotesOff ();             // silence all voices immediately
 
     // ── Master mix ────────────────────────────────────────────────────────────
     void setMasterGain (uint8_t midi_val, Logger& logger);  // 0..127 → level

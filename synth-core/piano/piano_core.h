@@ -148,8 +148,8 @@ private:
     PianoVoice voices_[PIANO_MAX_VOICES];
 
     // Sustain pedal state
-    bool sustain_                   = false;
-    bool delayed_offs_[PIANO_MAX_VOICES] = {};
+    std::atomic<bool> sustain_          {false};
+    std::atomic<bool> delayed_offs_[PIANO_MAX_VOICES];
 
     float sample_rate_ = 44100.f;
     float inv_sr_      = 1.f / 44100.f;

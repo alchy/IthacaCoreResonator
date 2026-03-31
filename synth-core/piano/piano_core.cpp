@@ -19,7 +19,6 @@
 
 #include <fstream>
 #include <algorithm>
-#include <cstring>
 #include <cstdio>
 
 using json = nlohmann::json;
@@ -33,7 +32,7 @@ static constexpr float TAU = 2.f * PI;
 // ── Constructor ───────────────────────────────────────────────────────────────
 
 PianoCore::PianoCore() {
-    std::memset(delayed_offs_, 0, sizeof(delayed_offs_));
+    for (auto& d : delayed_offs_) d.store(false, std::memory_order_relaxed);
 }
 
 // ── JSON loading ──────────────────────────────────────────────────────────────
@@ -137,19 +136,19 @@ void PianoCore::noteOn(uint8_t midi, uint8_t velocity) {
 
 void PianoCore::noteOff(uint8_t midi) {
     if (midi >= PIANO_MAX_VOICES) return;
-    if (sustain_)
-        delayed_offs_[midi] = true;
+    if (sustain_.load(std::memory_order_relaxed))
+        delayed_offs_[midi].store(true, std::memory_order_relaxed);
     else
         handleNoteOff(midi);
 }
 
 void PianoCore::sustainPedal(bool down) {
-    sustain_ = down;
+    sustain_.store(down, std::memory_order_relaxed);
     if (!down) {
         for (int m = 0; m < PIANO_MAX_VOICES; m++) {
-            if (delayed_offs_[m]) {
+            if (delayed_offs_[m].load(std::memory_order_relaxed)) {
                 handleNoteOff((uint8_t)m);
-                delayed_offs_[m] = false;
+                delayed_offs_[m].store(false, std::memory_order_relaxed);
             }
         }
     }
@@ -158,9 +157,9 @@ void PianoCore::sustainPedal(bool down) {
 void PianoCore::allNotesOff() {
     for (int m = 0; m < PIANO_MAX_VOICES; m++) {
         if (voices_[m].active) handleNoteOff((uint8_t)m);
-        delayed_offs_[m] = false;
+        delayed_offs_[m].store(false, std::memory_order_relaxed);
     }
-    sustain_ = false;
+    sustain_.store(false, std::memory_order_relaxed);
 }
 
 void PianoCore::handleNoteOn(uint8_t midi, uint8_t vel) noexcept {
@@ -361,7 +360,7 @@ std::vector<CoreParamDesc> PianoCore::describeParams() const {
 
 CoreVizState PianoCore::getVizState() const {
     CoreVizState vs;
-    vs.sustain_active = sustain_;
+    vs.sustain_active = sustain_.load(std::memory_order_relaxed);
 
     for (int m = 0; m < PIANO_MAX_VOICES; m++) {
         if (voices_[m].active) {

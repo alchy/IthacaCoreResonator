@@ -281,6 +281,9 @@ void CoreEngine::noteOff(uint8_t midi) {
 void CoreEngine::sustainPedal(uint8_t val) {
     pushMidiEvt(MidiEvt::SUSTAIN, 0, val);
 }
+void CoreEngine::allNotesOff() {
+    if (core_) core_->allNotesOff();
+}
 
 // ── Master mix ────────────────────────────────────────────────────────────────
 

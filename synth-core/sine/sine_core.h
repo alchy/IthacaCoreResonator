@@ -69,8 +69,8 @@ private:
     };
 
     std::array<SineVoice, N_VOICES> voices_{};
-    bool  sustain_       = false;
-    bool  delayed_offs_[N_VOICES] = {};
+    std::atomic<bool> sustain_      {false};
+    std::atomic<bool> delayed_offs_[N_VOICES];
 
     float sample_rate_   = 44100.f;
     bool  loaded_        = false;
