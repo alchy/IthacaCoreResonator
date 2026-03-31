@@ -446,6 +446,28 @@ exports/finetune-samples/
         ...
 ```
 
+### Regenerace JSON profilu z finetuned modelu
+
+Po fine-tuningu obsahuje `profile-<banka>-ft.pt` nove vahy, ale syntetizator nacita **JSON**,
+ne `.pt`. JSON je treba pregenerovat pres inferenci (bez dalsiho treninku — `--epochs 0`):
+
+```bash
+python -u analysis/train_instrument_profile.py \
+    --in     analysis/params-ks-grand.json \
+    --out    soundbanks/params-ks-grand-ft.json \
+    --model  analysis/profile-ks-grand-ft.pt \
+    --epochs 0
+```
+
+- `--in`: puvodni namerena banka (raw extrakce, bez zmeny)
+- `--out`: cilovy JSON pro ICR — do `soundbanks/` podle konvence pojmenovani
+- `--model`: finetuned checkpoint `.pt`
+- `--epochs 0`: preskoci gradient update, jen spusti inferenci pro vsech 88×8 pozic
+
+Trva cca 10–30 sekund. Vystup je kompatibilni se vsemi binarkami (ICR, GUI, RenderServer).
+
+---
+
 ### Globalni SynthConfig optimalizace
 
 Optimalizuje skalarne parametry SynthConfig (beat_scale, noise_level) s NN vahy zmrazenymi.
