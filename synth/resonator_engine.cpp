@@ -18,6 +18,7 @@
 #include "miniaudio.h"
 
 #include "resonator_engine.h"
+#include "synth_config_io.h"
 #include "midi_input.h"
 #include "note_lut.h"
 #include <cstring>
@@ -200,7 +201,7 @@ int ResonatorEngine::activeVoices() const { return vm_.activeVoiceCount(); }
 // ── runResonator — main loop (mirrors runSampler) ─────────────────────────────
 
 int runResonator(Logger& logger, const std::string& params_json_path,
-                 int midi_port) {
+                 int midi_port, const std::string& config_json_path) {
     logger.log("runResonator", LogSeverity::Info,
                "=== IthacaCoreResonator STARTING ===");
 
@@ -211,6 +212,21 @@ int runResonator(Logger& logger, const std::string& params_json_path,
         logger.log("runResonator", LogSeverity::Error, "Initialization failed");
         return 1;
     }
+
+    // Apply optional SynthConfig JSON (beat_scale, noise_level, …)
+    if (!config_json_path.empty()) {
+        SynthConfig cfg = engine->getSynthConfig();
+        std::string err;
+        if (loadSynthConfig(config_json_path, cfg, &err)) {
+            engine->getVoiceManager().setSynthConfig(cfg);
+            logger.log("runResonator", LogSeverity::Info,
+                       "SynthConfig loaded: " + config_json_path);
+        } else {
+            logger.log("runResonator", LogSeverity::Warning,
+                       "SynthConfig load failed: " + err);
+        }
+    }
+
     if (!engine->start()) {
         logger.log("runResonator", LogSeverity::Error, "Audio start failed");
         return 1;

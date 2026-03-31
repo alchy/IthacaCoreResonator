@@ -165,6 +165,9 @@ public:
 
     const SynthConfig& getSynthConfig() const noexcept { return synth_cfg_; }
 
+    // Replace the full SynthConfig at once (takes effect on next noteOn).
+    void setSynthConfig(const SynthConfig& cfg) noexcept { synth_cfg_ = cfg; }
+
     // Look up interpolated NoteParams for a MIDI note + velocity (GUI read — LUT is read-only).
     NoteParams lookupNote(int midi, int vel) const noexcept {
         if (!initialized_) return {};

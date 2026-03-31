@@ -10,23 +10,56 @@ Popis celého procesu od WAV banky po profil pro IthacaCoreResonator syntezér.
 WAV banka  (m060-vel3-f44.wav, ...)
     |
     v  extract_params.py
-params-<banka>.json          fyzikalni parametry (B, tau, A0, f0, beat_hz, ...)
+params-<banka>.json              fyzikalni parametry (B, tau, A0, f0, beat_hz, ...)
     |
-    v  find_outliers.py      (--drop)
-params-<banka>.json          bez chybne extrahovanych samplov
+    v  find_outliers.py --drop
+params-<banka>.json              bez chybne extrahovanych samplov
     |
     v  compute_spectral_eq.py
-params-<banka>.json          + LTASE EQ krivka (telova rezonance)
+params-<banka>.json              + LTASE EQ krivka (telova rezonance)
     |
     v  train_instrument_profile.py
-params-nn-profile-<banka>.json   NN-smoothed profil pro 88 x 8 pozic
-profile-<banka>.pt               vahy surrogate modelu (99 214 params)
+profile-<banka>-nn.pt            vahy surrogate modelu po NN treninku (99 214 params)
+params-<banka>-nn.json           NN-smoothed profil pro 88 x 8 pozic  ← vstup pro ICR
     |
     v  closed_loop_finetune.py --mode finetune   (volitelny)
-profile-<banka>.pt               doladeny model (MRSTFT fine-tuning NN vah)
+profile-<banka>-ft.pt            doladeny model po MRSTFT fine-tuningu
+    |
+    v  train_instrument_profile.py --epochs 0    (regenerace JSON z ft modelu)
+params-<banka>-ft.json           fine-tuned profil pro 88 x 8 pozic   ← vstup pro ICR
     |
     v  closed_loop_finetune.py --mode global     (volitelny)
-profile.synth_config.json        optimalizovane globalni SynthConfig parametry
+params-<banka>-ft.synth_config.json   optimalizovane globalni SynthConfig (beat_scale, noise_level)
+```
+
+---
+
+## Konvence pojmenovani souboru
+
+Vsechny soubory sdileji nazev banky a suffix oznacujici treninkovou fazi:
+
+| Faze | Model `.pt` | Params `.json` pro ICR |
+|------|-------------|------------------------|
+| Raw extrakce (kroky 1–3) | — | `params-<banka>.json` |
+| NN trenink (krok 4) | `profile-<banka>-nn.pt` | `params-<banka>-nn.json` |
+| MRSTFT fine-tuning (krok 5) | `profile-<banka>-ft.pt` | `params-<banka>-ft.json` |
+| Global opt (krok 5b) | — | `params-<banka>-ft.synth_config.json` |
+
+**Pravidla:**
+- `<banka>` je vzdy jmeno WAV banky (pr. `ks-grand`) — v nazvu `.pt` i `.json`
+- Suffix `-nn` = vystup z `train_instrument_profile.py` (EQ-supervised NN)
+- Suffix `-ft` = vystup z `closed_loop_finetune.py --mode finetune` (MRSTFT dolazeni)
+- `params-<banka>-ft.json` se generuje znovu z `profile-<banka>-ft.pt` pres `train_instrument_profile.py --epochs 0` (jen inference, bez dalsiho treninku)
+- Syntezator (GUI/CLI) vzdy nacita `.json`, ne `.pt` — pouzij nejnovejsi fazi
+
+**Priklad pro banku `ks-grand`:**
+```
+analysis/params-ks-grand.json                  raw extrakce
+analysis/profile-ks-grand-nn.pt                NN model
+analysis/params-ks-grand-nn.json               profil po NN treninku
+analysis/profile-ks-grand-ft.pt                finetuned model
+analysis/params-ks-grand-ft.json               profil po fine-tuningu
+analysis/params-ks-grand-ft.synth_config.json  globalni SynthConfig
 ```
 
 ---

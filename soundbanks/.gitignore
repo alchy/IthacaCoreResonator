@@ -1,3 +1,14 @@
-# Soundbank parameter files are large (10–30 MB) — not tracked in git.
-# Generate with: python analysis/extract-params.py --bank <WAV_DIR> --out soundbanks/<name>.json
-*.json
+# Soundbank parameter files — large raw extraction banks are NOT tracked.
+# NN-trained and finetuned profiles are tracked (generated once, stable).
+
+# Ignore large raw extraction banks (>10 MB per file)
+salamander.json
+*-raw.json
+
+# Track profile files used as synth input:
+#   params-<bank>-nn.json               NN-trained profile (step 4)
+#   params-<bank>-ft.json               MRSTFT-finetuned profile (step 5)
+#   params-<bank>-ft.synth_config.json  Global SynthConfig (step 5b)
+!params-*-nn.json
+!params-*-ft.json
+!*.synth_config.json

@@ -66,6 +66,10 @@ public:
     // Returns 0 on clean exit, non-zero on fatal error.
     int runTCP(int port = 9876);
 
+    // Access the underlying renderer (e.g., to apply SynthConfig at startup).
+    OfflineRenderer&       getRenderer()       { return renderer_; }
+    const OfflineRenderer& getRenderer() const { return renderer_; }
+
 private:
     std::string handleLine(const std::string& line);
 

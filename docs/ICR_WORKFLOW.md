@@ -10,22 +10,27 @@ Stručný přehled od WAV banky po živé hraní. Kompletní dokumentace v `docs
 WAV banka  (m060-vel3-f44.wav, vel = 0-7)
     │
     ▼  extract_params.py        fyzikální parametry per nota
+    │                           → params-<banka>.json
     │
     ▼  find_outliers.py --drop  filtrace chybně extrahovaných hodnot
     │
     ▼  compute_spectral_eq.py   LTASE spektrální EQ křivka
     │
     ▼  train_instrument_profile.py    surrogate NN (99 214 params)
-    │                                 → profile.pt
-    │                                 → params-nn-profile-<banka>.json
+    │                                 → profile-<banka>-nn.pt
+    │                                 → params-<banka>-nn.json
     │
     ▼  closed_loop_finetune.py --mode finetune   (volitelný)
-    │                                 → profile-finetuned.pt
+    │                                 → profile-<banka>-ft.pt
+    │
+    ▼  train_instrument_profile.py --epochs 0    (regenerace JSON z ft modelu)
+    │                                 → params-<banka>-ft.json
     │
     ▼  closed_loop_finetune.py --mode global     (volitelný)
-    │                                 → profile.synth_config.json
+    │                                 → params-<banka>-ft.synth_config.json
     │
-    ▼  IthacaCoreResonatorGUI.exe  params-nn-profile-<banka>.json
+    ▼  IthacaCoreResonatorGUI.exe  params-<banka>-nn.json   (po kroku 4)
+       IthacaCoreResonatorGUI.exe  params-<banka>-ft.json   (po kroku 5)
        IthacaCoreResonator.exe     (headless)
        IthacaRenderServer.exe      (offline rendering)
 ```
@@ -34,28 +39,41 @@ WAV banka  (m060-vel3-f44.wav, vel = 0-7)
 
 ## Spuštění syntezátoru
 
+Všechny binárky přijímají pojmenované parametry. Bez argumentů nebo s `--help` vypíše nápovědu.
+
 ### GUI (primární)
 
 ```bat
-build\bin\Release\IthacaCoreResonatorGUI.exe analysis\params-nn-profile-ks-grand.json
+:: Po NN tréninku (krok 4)
+build\bin\Release\IthacaCoreResonatorGUI.exe --params soundbanks\params-ks-grand-nn.json
+
+:: Po fine-tuningu (krok 5) + SynthConfig z global optu (krok 5b)
+build\bin\Release\IthacaCoreResonatorGUI.exe ^
+    --params soundbanks\params-ks-grand-ft.json ^
+    --config soundbanks\params-ks-grand-ft.synth_config.json
 ```
 
 GUI obsahuje:
 - Piano vizualizaci a voice matrix
 - Panel SynthConfig s live sliders (beat_scale, eq_strength, noise_level, ...)
 - Peak metering, SysEx LED indikátor
-- Klávesová fallback: viz CLI níže
+- Hodnoty z `--config` jsou načteny při startu; lze je dále upravit slidery
 
 ### CLI (headless — bez GUI)
 
 ```bat
-build\bin\Release\IthacaCoreResonator.exe [params.json] [midi_port]
+build\bin\Release\IthacaCoreResonator.exe --params soundbanks\params-ks-grand-nn.json
+build\bin\Release\IthacaCoreResonator.exe --params soundbanks\params-ks-grand-ft.json ^
+    --config soundbanks\params-ks-grand-ft.synth_config.json ^
+    --port 1
 ```
 
-| Argument | Výchozí | Popis |
+| Parametr | Výchozí | Popis |
 |---|---|---|
-| `params.json` | `soundbanks/salamander.json` | Physics parameter tabulka |
-| `midi_port` | `0` | Index MIDI vstupu (0 = první dostupný) |
+| `--params <path>` | `soundbanks/salamander.json` | Physics parameter profil |
+| `--config <path>` | _(prázdné)_ | SynthConfig JSON — beat_scale, noise_level, … |
+| `--port <N>` | `0` | Index MIDI vstupu (0 = první dostupný) |
+| `--help` | — | Zobrazí nápovědu a ukončí se |
 
 Dostupné MIDI porty jsou vypsány při startu:
 ```
@@ -70,37 +88,38 @@ z                 →   sustain pedal (toggle)
 q                 →   quit
 ```
 
-### Parametry při spuštění s NN profilem
+### Soundbanks adresář
 
-Po tréninku a fine-tuning použij `params-nn-profile-ks-grand.json` místo výchozího `soundbanks/salamander.json`:
-
-```bat
-:: GUI
-build\bin\Release\IthacaCoreResonatorGUI.exe analysis\params-nn-profile-ks-grand.json
-
-:: CLI s druhým MIDI portem
-build\bin\Release\IthacaCoreResonator.exe analysis\params-nn-profile-ks-grand.json 1
+Soubory v `soundbanks/` jsou součástí buildu — CMake je kopíruje vedle každé binárky:
 ```
+build\bin\Release\
+    IthacaCoreResonator.exe
+    IthacaCoreResonatorGUI.exe
+    IthacaRenderServer.exe
+    soundbanks\
+        params-ks-grand-nn.json        ← NN profil (krok 4)
+        params-ks-grand-ft.json        ← finetuned profil (krok 5, po regeneraci)
+        params-ks-grand-ft.synth_config.json  ← global SynthConfig (krok 5b)
+        salamander.json                ← záložní banka (neignorována gitem)
+```
+
+Přidání nové banky: zkopíruj vygenerovaný `params-<bank>-nn.json` do `soundbanks/` a přebuilduj.
 
 ### Aplikace optimalizovaného SynthConfig
 
-Po `--mode global` vznikne `profile.synth_config.json` s hodnotami `beat_scale` a `noise_level`.
-Tyto hodnoty lze aplikovat přes SysEx (Python helper) nebo ručně v GUI:
+**Možnost A — při startu (doporučeno):**
+```bat
+IthacaCoreResonator.exe ^
+    --params soundbanks\params-ks-grand-ft.json ^
+    --config soundbanks\params-ks-grand-ft.synth_config.json
+```
 
+**Možnost B — za běhu přes SysEx (loopMIDI):**
 ```python
 import json
-from analysis.render_client import RenderClient
-
-cfg = json.load(open("analysis/profile.synth_config.json"))
-# cfg = {"beat_scale": 1.23, "noise_level": 0.88}
-
-# Via RenderServer (offline / testování):
-with RenderClient("build/bin/Release/IthacaRenderServer.exe",
-                  "analysis/params-nn-profile-ks-grand.json") as rc:
-    rc.set_config(**cfg)
-
-# Via SysEx na živý ICR (loopMIDI):
 from analysis.sysex_test import build_set_param, PARAMS, open_port
+
+cfg = json.load(open("soundbanks/params-ks-grand-ft.synth_config.json"))
 midi = open_port(0)
 for name, value in cfg.items():
     pid = PARAMS[name][0]
@@ -108,7 +127,18 @@ for name, value in cfg.items():
 midi.close_port()
 ```
 
-Parametry lze také nastavit přímo v GUI pomocí sliderů (panel vpravo).
+**Možnost C — za běhu přes RenderServer (offline testování):**
+```python
+from analysis.render_client import RenderClient
+import json
+
+cfg = json.load(open("soundbanks/params-ks-grand-ft.synth_config.json"))
+with RenderClient("build/bin/Release/IthacaRenderServer.exe",
+                  "soundbanks/params-ks-grand-nn.json") as rc:
+    rc.set_config(**cfg)
+```
+
+**Možnost D — ručně v GUI** pomocí sliderů v panelu SynthConfig.
 
 ---
 
@@ -225,13 +255,19 @@ exports/finetune-samples-20260331-0810/
 ## Build a spuštění render serveru
 
 ```bash
-# Build
+# Build (soundbanks/ se zkopíruje automaticky)
 cmake -S . -B build
 cmake --build build --config Release
 
-# Spuštění
+# Spuštění — NN profil
 build/bin/Release/IthacaRenderServer.exe \
-    analysis/params-nn-profile-ks-grand.json \
+    --params soundbanks/params-ks-grand-nn.json \
+    --port 9876
+
+# Spuštění — finetuned profil + SynthConfig
+build/bin/Release/IthacaRenderServer.exe \
+    --params soundbanks/params-ks-grand-ft.json \
+    --config soundbanks/params-ks-grand-ft.synth_config.json \
     --port 9876
 ```
 
@@ -240,7 +276,7 @@ build/bin/Release/IthacaRenderServer.exe \
 from analysis.render_client import RenderClient
 
 with RenderClient("build/bin/Release/IthacaRenderServer.exe",
-                  "analysis/params-nn-profile-ks-grand.json") as rc:
+                  "soundbanks/params-ks-grand-nn.json") as rc:
     # vel = velocity band 0-7 (odpovídá trénovacím datům)
     n = rc.render(midi=60, vel=3, output="exports/c4_vel3.wav", duration=3.0)
 ```
@@ -268,11 +304,12 @@ MIDI klaviatura (0–127) se mapuje automaticky ve VoiceManageru.
 | `synth/offline_renderer.h/.cpp` | Headless C++ renderer |
 | `synth/render_server.h/.cpp` | TCP JSON render server |
 | `server_main.cpp` | Render server entry point |
-| `analysis/params-ks-grand.json` | Naměřená banka (704 samplov) |
-| `analysis/params-nn-profile-ks-grand.json` | NN-smoothed profil (88×8) — vstup pro ICR |
-| `analysis/profile.pt` | Natrénovaný model — EQ-supervised (krok 4) |
-| `analysis/profile-finetuned.pt` | Doladěný model po MRSTFT fine-tuningu (krok 5) |
-| `analysis/profile.synth_config.json` | Optimalizovaný SynthConfig (beat_scale, noise_level) |
+| `analysis/params-ks-grand.json` | Naměřená banka (704 samplov) — raw extrakce |
+| `analysis/profile-ks-grand-nn.pt` | Model po NN tréninku — EQ-supervised (krok 4) |
+| `analysis/params-ks-grand-nn.json` | NN-smoothed profil (88×8) — vstup pro ICR po kroku 4 |
+| `analysis/profile-ks-grand-ft.pt` | Model po MRSTFT fine-tuningu (krok 5) |
+| `analysis/params-ks-grand-ft.json` | Fine-tuned profil (88×8) — vstup pro ICR po kroku 5 |
+| `analysis/params-ks-grand-ft.synth_config.json` | Optimalizovaný SynthConfig (beat_scale, noise_level) |
 
 ---
 
