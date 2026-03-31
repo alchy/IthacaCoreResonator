@@ -84,6 +84,7 @@ import random
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -675,6 +676,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    # Auto-stamp render-dir so each run gets its own folder:
+    #   exports/finetune-samples  →  exports/finetune-samples-20260331-0810
+    if args.render_dir:
+        ts = datetime.now().strftime("%Y%m%d-%H%M")
+        args.render_dir = f"{args.render_dir}-{ts}"
+
     log  = _Logger(args.log)
 
     torch.manual_seed(args.seed)
