@@ -101,9 +101,9 @@ endif()
 
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64|X86_64")
     if (MSVC)
-        target_compile_options(IthacaCoreResonator PRIVATE /arch:AVX2)
+        target_compile_options(IthacaCoreResonator PRIVATE /arch:AVX)
     else()
-        target_compile_options(IthacaCoreResonator PRIVATE -mavx2 -mfma)
+        target_compile_options(IthacaCoreResonator PRIVATE -mavx)
     endif()
 endif()
 
@@ -182,9 +182,9 @@ endif()
 
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64|X86_64")
     if (MSVC)
-        target_compile_options(IthacaCoreResonatorGUI PRIVATE /arch:AVX2)
+        target_compile_options(IthacaCoreResonatorGUI PRIVATE /arch:AVX)
     else()
-        target_compile_options(IthacaCoreResonatorGUI PRIVATE -mavx2 -mfma)
+        target_compile_options(IthacaCoreResonatorGUI PRIVATE -mavx)
     endif()
 endif()
 
@@ -231,9 +231,9 @@ target_include_directories(IthacaRenderServer PRIVATE
 
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64|X86_64")
     if (MSVC)
-        target_compile_options(IthacaRenderServer PRIVATE /arch:AVX2)
+        target_compile_options(IthacaRenderServer PRIVATE /arch:AVX)
     else()
-        target_compile_options(IthacaRenderServer PRIVATE -mavx2 -mfma)
+        target_compile_options(IthacaRenderServer PRIVATE -mavx)
     endif()
 endif()
 
