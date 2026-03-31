@@ -1,0 +1,8 @@
+[INF][RenderServer] params: C:\Users\jindr\PycharmProjects\IthacaCoreResonator - Copy\analysis\params-nn-profile-ks-grand.json
+[INF][RenderServer] port:   9876
+[INF][VoiceManager] Loading: C:\Users\jindr\PycharmProjects\IthacaCoreResonator - Copy\analysis\params-nn-profile-ks-grand.json
+[INF][VoiceManager] 704 note entries loaded. SR=44100
+[INF][RenderServer] Listening on 127.0.0.1:9876
+[INF][RenderServer] Client connected
+[INF][RenderServer] Client disconnected
+[INF][RenderServer] stopped

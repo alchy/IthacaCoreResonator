@@ -1,0 +1,83 @@
+═══════════════════════════════════════════════════════════════════════
+ OVERNIGHT WORK REPORT — 2026-03-31 08:15 CEDT (aktualizováno)
+═══════════════════════════════════════════════════════════════════════
+
+DOKONČENO (noc 2026-03-30 → 31):
+
+1. EQ retrain — profile.pt (commit f3ec15e)
+   train=0.966700, eval=1.288875 (1800 epoch, 10112 EQ datových bodů)
+
+2. spectral_eq přidán do 704/704 JSON záznamů (commit 3ff3425)
+
+3. Oprava dokumentace — všechny docs přesně odpovídají kódu:
+   RENDER_SERVER.md, TRAIN.md, SYSEX.md, PLAN.md, COMPILE.md, ANALYSIS.md
+   Commits: a1cc516, 648aece, b7928ea, b563e84, edf3974, 62a144e, bc1a52b
+
+4. Opravy bugů:
+   - render_client.py: špatná výchozí cesta (build/bin → build/bin/Release)
+   - sysex_test.py: chybějící render_ref_duration_s (0x5005), 159→167 bajtů
+   - Commits: 9da07d3, 2b0399a, 403d303
+
+5. NaN fix v torch_synth.py (commit a2e3626) — viz níže
+
+═══════════════════════════════════════════════════════════════════════
+ ANALÝZA NaN EXPLOZE (epoch 120 prvního finetune)
+═══════════════════════════════════════════════════════════════════════
+
+Příčina: B_net → velké log_B → B = exp(velké) → f_hzs = ∞ pro vysoké k
+         valid maska = 0 (nad Nyquistem), ale NaN × 0 = NaN v IEEE 754
+         cos(∞) = NaN → otrávení celého audio tensoru → loss = NaN
+
+Projev (dle poslechu uživatele):
+  epoch 040: basové driftování (helicopter), pěkné středy a výšky
+  epoch 060: pěkné středy/výšky, stále basové driftování
+  epoch 080: basové driftování zmizelo, ale bas plochý/nevýrazný
+  epoch 100: bas se částečně vrací, zlepšení výšek
+  epoch 120: "sumový výstřel – ticho – výstřel" → 100% NaN sampley
+  epoch 130+: loss=NaN permanentně
+
+Oprava (commit a2e3626):
+  - B = exp(forward_B(mf).clamp(max=0.0)) → B ≤ 1.0 (fyzicky grand piano B ≤ 0.01)
+  - valid maska: přidán isfinite() guard
+
+═══════════════════════════════════════════════════════════════════════
+ AKTUÁLNĚ BĚŽÍ
+═══════════════════════════════════════════════════════════════════════
+
+ČISTÝ FINETUNE (PID 12352) — spuštěn 08:10 CEDT 31.3.:
+  Vstup:   analysis/profile.pt  ← EQ-retrainovaný model (lepší základ)
+  Výstup:  analysis/profile-finetuned.pt
+  Bank:    C:/SoundBanks/IthacaPlayer/ks-grand
+  Epochy:  200, lr=3e-4, batch=8, eval-every=20, k-max=40, duration=3.0
+  Sampley: exports/finetune-samples-clean/
+  Log:     analysis/runtime-logs/finetune-clean.log
+  ETA:     ~15:00-18:00 CEDT (7-10h)
+  Fix:     NaN exploze opravena (B clamp + isfinite maska)
+
+═══════════════════════════════════════════════════════════════════════
+ DOPORUČENÍ PO NÁVRATU (~20:00)
+═══════════════════════════════════════════════════════════════════════
+
+1. Zkontrolujte exports/finetune-samples-clean/ — chronologické epochy
+2. Poslechněte sample z každé epoch-XXXX složky (hlavně bass, středy, výšky)
+3. Pokud finetune doběhl (profile-finetuned.pt existuje):
+   - Global SynthConfig opt byl spuštěn automaticky (beat_scale, noise_level)
+   - Výsledky committovány a pushnuty
+
+OČEKÁVANÉ ZLEPŠENÍ:
+  - Basové driftování (helicopter): způsobeno výkyvy phi_diff + beat_hz u basů
+    → B clamp zabrání astronomickým frekvencím, basový beat bude stabilnější
+  - NaN: nemůže se opakovat (clamp + isfinite)
+  - Výchozí MRSTFT: 6.84 (stejné jako předchozí run, stejný model)
+  - Očekávaná konvergence: ~5.0-4.8 (EQ model je lepší základ)
+
+GIT LOG (dev-seed-synthconfig):
+  a2e3626 fix: torch_synth — clamp B_net output to prevent cos(inf)=NaN explosion
+  403d303 fix: sysex_test.py verify_routing — add render_ref_duration_s test case
+  2b0399a fix: sysex_test.py — add render_ref_duration_s (0x5005), fix byte count
+  9da07d3 fix: render_client.py default paths for Windows MSVC Release build
+  bc1a52b docs: fix PLAN.md component map — correct files, split by target
+  62a144e docs: mark longitudinal partials as complete in ANALYSIS.md
+  ...
+
+═══════════════════════════════════════════════════════════════════════
