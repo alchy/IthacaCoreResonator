@@ -177,7 +177,9 @@ void PianoCore::handleNoteOn(uint8_t midi, uint8_t vel) noexcept {
     initVoice(voices_[midi], midi, vel_idx,
               beat_scale_.load(std::memory_order_relaxed),
               noise_level_.load(std::memory_order_relaxed),
-              rng_seed_.load(std::memory_order_relaxed));
+              rng_seed_.load(std::memory_order_relaxed),
+              pan_spread_.load(std::memory_order_relaxed),
+              stereo_decorr_.load(std::memory_order_relaxed));
 
     last_midi_.store(midi, std::memory_order_relaxed);
     last_vel_ .store(vel,  std::memory_order_relaxed);
@@ -193,7 +195,8 @@ void PianoCore::handleNoteOff(uint8_t midi) noexcept {
 
 void PianoCore::initVoice(PianoVoice& v, int midi, int vel_idx,
                            float beat_scale, float noise_level,
-                           int rng_seed) noexcept {
+                           int rng_seed, float pan_spread,
+                           float stereo_decorr) noexcept {
     const PianoNoteParam& np = note_params_[midi][vel_idx];
 
     v.active     = true;
@@ -241,6 +244,33 @@ void PianoCore::initVoice(PianoVoice& v, int midi, int vel_idx,
         ps.beat_hz_h  = pp.beat_hz * beat_scale * 0.5f;
         ps.phi        = pp.phi;
     }
+
+    // Stereo panning: constant-power pan per string, MIDI-dependent center
+    // Matches physics_synth.py:  center = pi/4 + (midi-64.5)/87 * 0.20
+    // String 1 (s1 = carrier+beat/2) → angle1 = center - half
+    // String 2 (s2 = carrier-beat/2) → angle2 = center + half
+    {
+        const float center = (PI / 4.f) + ((float)midi - 64.5f) / 87.0f * 0.20f;
+        const float half   = pan_spread * 0.5f;
+        const float a1     = center - half;
+        const float a2     = center + half;
+        v.gl1 = std::cos(a1);  v.gr1 = std::sin(a1);
+        v.gl2 = std::cos(a2);  v.gr2 = std::sin(a2);
+    }
+
+    // Schroeder first-order all-pass decorrelation (matches physics_synth.py)
+    // decor_strength = clamp((midi-40)/60, 0,1) * 0.45 * stereo_decorr
+    // L all-pass: g_L = 0.35 + ds*0.25   (positive)
+    // R all-pass: g_R = -(0.35 + ds*0.20) (negative → phase flip at Nyquist)
+    // Difference equation: y[n] = -g*x[n] + x[n-1] - g*y[n-1]
+    {
+        float ds = std::min(1.0f, std::max(0.0f, ((float)midi - 40.0f) / 60.0f))
+                   * 0.45f * stereo_decorr;
+        v.decor_str = ds;
+        v.ap_g_L    =   0.35f + ds * 0.25f;
+        v.ap_g_R    = -(0.35f + ds * 0.20f);
+        v.ap_x_L = v.ap_y_L = v.ap_x_R = v.ap_y_R = 0.f;
+    }
 }
 
 // ── Audio (RT thread, additive) ──────────────────────────────────────────────
@@ -267,8 +297,8 @@ bool PianoCore::processBlock(float* out_l, float* out_r, int n_samples) noexcept
             const float t_f  = (float)v.t_samples * inv_sr_;
             const float tpi2 = TAU * t_f;
 
-            // ── Partials ────────────────────────────────────────────────────
-            float voice_samp = 0.f;
+            // ── Partials (stereo: s1 → pan angle1, s2 → pan angle2) ────────
+            float samp_L = 0.f, samp_R = 0.f;
             for (int ki = 0; ki < v.n_partials; ki++) {
                 PianoPartialState& ps = v.partials[ki];
 
@@ -284,27 +314,44 @@ bool PianoCore::processBlock(float* out_l, float* out_r, int n_samples) noexcept
                 float s1 = std::cos(phase_c + phase_b);
                 float s2 = std::cos(phase_c - phase_b + v.phi_diff);
 
-                voice_samp += ps.A0_scaled * env * (s1 + s2) * 0.5f;
+                float base = ps.A0_scaled * env * 0.5f;
+                samp_L += base * (s1 * v.gl1 + s2 * v.gl2);
+                samp_R += base * (s1 * v.gr1 + s2 * v.gr2);
             }
 
-            // ── Noise ───────────────────────────────────────────────────────
-            float noise_samp = v.ndist(v.rng);
-            voice_samp += v.A_noise_sc * noise_samp * v.noise_env;
+            // ── Noise (independent L/R) ──────────────────────────────────────
+            float noise_sc = v.A_noise_sc * v.noise_env;
+            samp_L += noise_sc * v.ndist(v.rng);
+            samp_R += noise_sc * v.ndist(v.rng);
             v.noise_env *= v.noise_decay;
 
+            // ── Schroeder all-pass decorrelation ─────────────────────────────
+            // y[n] = -g*x[n] + x[n-1] - g*y[n-1]
+            if (v.decor_str > 0.01f) {
+                float Lap = -v.ap_g_L * samp_L + v.ap_x_L - v.ap_g_L * v.ap_y_L;
+                float Rap = -v.ap_g_R * samp_R + v.ap_x_R - v.ap_g_R * v.ap_y_R;
+                v.ap_x_L = samp_L;  v.ap_y_L = Lap;
+                v.ap_x_R = samp_R;  v.ap_y_R = Rap;
+                float inv = 1.f - v.decor_str;
+                samp_L = samp_L * inv + Lap * v.decor_str;
+                samp_R = samp_R * inv + Rap * v.decor_str;
+            }
+
             // ── Onset / release gates ────────────────────────────────────────
-            voice_samp *= env_gate;
+            samp_L *= env_gate;
+            samp_R *= env_gate;
             if (v.releasing) {
-                voice_samp *= v.rel_gain;
-                v.rel_gain  += v.rel_step;
+                samp_L *= v.rel_gain;
+                samp_R *= v.rel_gain;
+                v.rel_gain += v.rel_step;
                 if (v.rel_gain <= 0.f) {
-                    v.active    = false;
-                    v.rel_gain  = 0.f;
+                    v.active   = false;
+                    v.rel_gain = 0.f;
                 }
             }
 
-            out_l[i] += voice_samp;
-            out_r[i] += voice_samp;   // mono → identical L/R
+            out_l[i] += samp_L;
+            out_r[i] += samp_R;
 
             v.t_samples++;
 
@@ -338,21 +385,35 @@ bool PianoCore::setParam(const std::string& key, float value) {
         rng_seed_.store((int)value, std::memory_order_relaxed);
         return true;
     }
+    if (key == "pan_spread") {
+        pan_spread_.store(std::max(0.f, std::min(3.14159f, value)),
+                          std::memory_order_relaxed);
+        return true;
+    }
+    if (key == "stereo_decorr") {
+        stereo_decorr_.store(std::max(0.f, std::min(2.f, value)),
+                             std::memory_order_relaxed);
+        return true;
+    }
     return false;
 }
 
 bool PianoCore::getParam(const std::string& key, float& out) const {
-    if (key == "beat_scale")  { out = beat_scale_ .load(std::memory_order_relaxed); return true; }
-    if (key == "noise_level") { out = noise_level_.load(std::memory_order_relaxed); return true; }
-    if (key == "rng_seed")    { out = (float)rng_seed_.load(std::memory_order_relaxed); return true; }
+    if (key == "beat_scale")   { out = beat_scale_   .load(std::memory_order_relaxed); return true; }
+    if (key == "noise_level")  { out = noise_level_  .load(std::memory_order_relaxed); return true; }
+    if (key == "rng_seed")     { out = (float)rng_seed_.load(std::memory_order_relaxed); return true; }
+    if (key == "pan_spread")   { out = pan_spread_   .load(std::memory_order_relaxed); return true; }
+    if (key == "stereo_decorr"){ out = stereo_decorr_.load(std::memory_order_relaxed); return true; }
     return false;
 }
 
 std::vector<CoreParamDesc> PianoCore::describeParams() const {
     return {
-        { "beat_scale",  "Beat Scale",  "Timbre", "×",  beat_scale_ .load(), 0.f, 4.f, false },
-        { "noise_level", "Noise Level", "Timbre", "×",  noise_level_.load(), 0.f, 4.f, false },
-        { "rng_seed",    "RNG Seed",    "Debug",  "",   (float)rng_seed_.load(), 0.f, 9999.f, true  },
+        { "beat_scale",   "Beat Scale",    "Timbre",  "×",   beat_scale_   .load(), 0.f,    4.f,     false },
+        { "noise_level",  "Noise Level",   "Timbre",  "×",   noise_level_  .load(), 0.f,    4.f,     false },
+        { "pan_spread",   "Pan Spread",    "Stereo",  "rad", pan_spread_   .load(), 0.f,    3.14159f,false },
+        { "stereo_decorr","Stereo Decorr", "Stereo",  "×",   stereo_decorr_.load(), 0.f,    2.f,     false },
+        { "rng_seed",     "RNG Seed",      "Debug",   "",    (float)rng_seed_.load(), 0.f,  9999.f,  true  },
     };
 }
 

@@ -109,6 +109,20 @@ struct PianoVoice {
     std::mt19937 rng;
     std::normal_distribution<float> ndist{0.f, 1.f};
 
+    // Stereo pan gains (constant-power; precomputed at noteOn from MIDI + pan_spread)
+    // gl1/gr1 = string 1 (s1 = carrier+beat/2), gl2/gr2 = string 2 (s2 = carrier-beat/2)
+    float gl1 = 0.707f, gr1 = 0.707f;
+    float gl2 = 0.707f, gr2 = 0.707f;
+
+    // Schroeder all-pass decorrelation state (first-order IIR, independent per channel)
+    float decor_str = 0.f;   // blend weight [0,1]
+    float ap_g_L    = 0.f;   // all-pass coefficient for L
+    float ap_g_R    = 0.f;   // all-pass coefficient for R  (opposite sign → phase flip)
+    float ap_x_L    = 0.f;   // x[n-1] for L all-pass
+    float ap_y_L    = 0.f;   // y[n-1] for L all-pass
+    float ap_x_R    = 0.f;
+    float ap_y_R    = 0.f;
+
     // Active partial state
     int n_partials = 0;
     PianoPartialState partials[PIANO_MAX_PARTIALS];
@@ -156,9 +170,11 @@ private:
     bool  loaded_      = false;
 
     // GUI-settable parameters (read from RT thread via atomic)
-    std::atomic<float> beat_scale_  {1.0f};   // scales beat_hz for all notes
-    std::atomic<float> noise_level_ {1.0f};   // scales noise amplitude
-    std::atomic<int>   rng_seed_    {0};       // base seed (applied at noteOn)
+    std::atomic<float> beat_scale_   {1.0f};   // scales beat_hz for all notes
+    std::atomic<float> noise_level_  {1.0f};   // scales noise amplitude
+    std::atomic<int>   rng_seed_     {0};       // base seed (applied at noteOn)
+    std::atomic<float> pan_spread_   {0.55f};  // stereo spread in radians (0=mono, 0.55=default)
+    std::atomic<float> stereo_decorr_{1.0f};   // Schroeder all-pass strength multiplier
 
     // Last note info for GUI viz
     std::atomic<int>   last_midi_   {-1};
@@ -168,7 +184,8 @@ private:
     void handleNoteOn (uint8_t midi, uint8_t vel) noexcept;
     void handleNoteOff(uint8_t midi)              noexcept;
     void initVoice    (PianoVoice& v, int midi, int vel_idx,
-                       float beat_scale, float noise_level, int rng_seed) noexcept;
+                       float beat_scale, float noise_level, int rng_seed,
+                       float pan_spread, float stereo_decorr) noexcept;
 
     // Map MIDI velocity 1-127 to vel index 0-7
     static int midiVelToIdx(uint8_t velocity) {
