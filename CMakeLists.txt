@@ -44,10 +44,15 @@ set(SINE_CORE_SOURCES
     synth-core/sine/sine_core.cpp
 )
 
-# Active core set for real-time targets (headless + GUI)
-# Switch this to include piano_core.cpp once implemented.
+set(PIANO_CORE_SOURCES
+    synth-core/piano/piano_core.cpp
+)
+
+# Active core set for real-time targets (headless + GUI).
+# Both SineCore and PianoCore are available; select via --core <name>.
 set(RT_CORE_SOURCES
     ${SINE_CORE_SOURCES}
+    ${PIANO_CORE_SOURCES}
 )
 
 # ── DSP chain ─────────────────────────────────────────────────────────────────

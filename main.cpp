@@ -19,9 +19,9 @@
  *   --help                 Show this message
  *
  * Cores and their parameter files:
- *   SineCore               No params file needed
- *   PianoCore (future)     soundbanks/params-<bank>-nn.json
- *                          soundbanks/params-<bank>-ft.json
+ *   SineCore   No params file needed
+ *   PianoCore  --params analysis/params-piano-ks-grand.json
+ *              (generate with: python analysis/export_piano_params.py)
  */
 
 #include "synth/core_engine.h"
@@ -31,6 +31,7 @@
 // Pull in core registrations by including headers.
 // REGISTER_SYNTH_CORE() fires at static-init time in the corresponding .cpp.
 #include "synth-core/sine/sine_core.h"
+#include "synth-core/piano/piano_core.h"
 
 #include <string>
 #include <vector>

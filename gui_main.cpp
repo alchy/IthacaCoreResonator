@@ -22,6 +22,7 @@
 
 // Core registrations
 #include "synth-core/sine/sine_core.h"
+#include "synth-core/piano/piano_core.h"
 
 #include <string>
 #include <vector>
