@@ -158,6 +158,9 @@ class InstrumentProfile(nn.Module):
         self.noise_net     = mlp(MIDI_DIM + VEL_DIM, hidden, 3)
         # biexp_net → [logit(a1), log(tau2/tau1)]
         self.biexp_net     = mlp(MIDI_DIM + K_DIM + VEL_DIM, hidden, 2)
+        # phi_net → scalar phi_diff (radians) — relative phase between 2 strings.
+        # phi_diff = 0 → constructive (max attack); phi_diff = π → destructive (max beating).
+        self.phi_net       = mlp(MIDI_DIM + VEL_DIM, hidden, 1)
 
         # Bias B_net final layer to log(1e-4) ≈ -9.2 so initial B is in piano range.
         nn.init.constant_(self.B_net[-1].bias, -9.2)
@@ -173,6 +176,9 @@ class InstrumentProfile(nn.Module):
         nn.init.constant_(self.biexp_net[-1].bias[0],  1.73)
         nn.init.constant_(self.biexp_net[-1].bias[1],  1.10)
 
+        # phi_net bias = 0 → phi_diff=0 (in-phase = constructive attack onset)
+        nn.init.constant_(self.phi_net[-1].bias, 0.0)
+
     def forward_B(self, mf):                  return self.B_net(mf)
     def forward_dur(self, mf):                return self.dur_net(mf)
     def forward_tau1_k1(self, mf, vf):        return self.tau1_k1_net(torch.cat([mf, vf], -1))
@@ -183,6 +189,7 @@ class InstrumentProfile(nn.Module):
     def forward_wf(self, mf):                 return self.wf_net(mf)
     def forward_noise(self, mf, vf):          return self.noise_net(torch.cat([mf, vf], -1))
     def forward_biexp(self, mf, kf, vf):      return self.biexp_net(torch.cat([mf, kf, vf], -1))
+    def forward_phi(self, mf, vf):            return self.phi_net(torch.cat([mf, vf], -1))
 
 
 # ── Data extraction ───────────────────────────────────────────────────────────

@@ -113,6 +113,7 @@ private:
 };
 
 // ── Convenience: full startup + interactive loop (like runSampler) ────────────
-// midi_port: index into MidiInput::listPorts() (-1 = auto/first)
+// midi_port:       index into MidiInput::listPorts() (-1 = auto/first)
+// config_json_path: optional SynthConfig JSON to apply after init ("" = skip)
 int runResonator(Logger& logger, const std::string& params_json_path,
-                 int midi_port = 0);
+                 int midi_port = 0, const std::string& config_json_path = "");

@@ -39,6 +39,7 @@ PARAMS = {
     "noise_level":            (0x5002, 0.00,  4.00, 1.000),
     "onset_ms":               (0x5003, 0.00,  50.0, 3.000),
     "longitudinal_precursor": (0x5004, 0.00,  1.00, 0.000),
+    "render_ref_duration_s":  (0x5005, 0.10, 60.0,  3.000),
 }
 
 MFR  = 0x7D
@@ -135,7 +136,7 @@ def run_tests(midi: rtmidi.MidiOut):
     print("\n--- Test 3: SET_ALL (defaults) ---")
     msg = build_set_all({})
     midi.send_message(msg)
-    print(f"  SET_ALL sent ({len(msg)} bytes, expected 159)")
+    print(f"  SET_ALL sent ({len(msg)} bytes, expected 167)")
 
     time.sleep(delay)
 
@@ -209,7 +210,7 @@ def verify_routing(server_exe: str, params_json: str):
     """
     Verify that every param ID routes to the correct SynthConfig field.
 
-    Sends SET_PARAM for each of the 19 params via the RenderServer 'sysex'
+    Sends SET_PARAM for each of the 20 params via the RenderServer 'sysex'
     command (JSON IPC — no real MIDI needed), then reads back with get_config
     and compares. Encoding is lossless (full 32-bit IEEE 754), so values must
     match exactly (within float epsilon).
@@ -239,6 +240,7 @@ def verify_routing(server_exe: str, params_json: str):
         "noise_level":            0.5,
         "onset_ms":               8.0,
         "longitudinal_precursor": 0.3,
+        "render_ref_duration_s":  5.0,
     }
 
     print("=== Routing verification via IthacaRenderServer ===")

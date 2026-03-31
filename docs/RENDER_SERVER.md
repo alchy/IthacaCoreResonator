@@ -5,11 +5,10 @@
 IthacaCoreResonator (hlavní syntetizér) běží v reálném čase s audio zařízením a MIDI vstupem.
 Pro trénování surrogate modelu je potřeba renderovat tisíce not rychle, bez latence audio zařízení
 a bez GUI. `IthacaRenderServer` je oddělený binární soubor, který sdílí celý syntetický engine,
-ale komunikuje přes stdin/stdout JSON protokol — ideální pro Python subprocess IPC.
+ale komunikuje přes **TCP JSON protokol** — ideální pro Python subprocess IPC.
 
-Architektura sdílí DSP kód (`SYNTH_SOURCES`), takže jakákoliv změna enginu se automaticky projeví
-ve všech třech binárních souborech (IthacaCoreResonator, IthacaCoreResonatorGUI, IthacaRenderServer)
-po jediném buildu.
+Architektura sdílí DSP kód (`RENDER_SYNTH_SOURCES` ⊂ `SYNTH_SOURCES` v CMakeLists.txt), takže
+jakákoliv změna enginu se automaticky projeví ve všech binárních souborech po jediném buildu.
 
 ---
 
@@ -17,20 +16,20 @@ po jediném buildu.
 
 ```
 Python training loop
-       │  subprocess
+       │  subprocess + TCP socket
        ▼
 IthacaRenderServer.exe
-   ├── server_main.cpp        — arg parsing, Logger init, heap-alloc RenderServer
-   ├── synth/render_server.cpp — JSON command dispatcher
-   ├── synth/offline_renderer.cpp — headless note renderer (no audio device)
-   ├── synth/voice_manager.cpp    — shared synth engine (same as ICR)
-   ├── synth/sysex.cpp            — SysEx codec (set/get config via byte arrays)
-   └── dsp/dsp_chain.cpp          — limiter + BBE post-processing
+   ├── server_main.cpp             — arg parsing, Logger init, heap-alloc RenderServer
+   ├── synth/render_server.cpp     — TCP listener + JSON command dispatcher
+   ├── synth/offline_renderer.cpp  — headless note renderer (no audio device)
+   ├── synth/voice_manager.cpp     — shared synth engine (same as ICR)
+   └── synth/sysex.cpp             — SysEx codec (set/get config via byte arrays)
 ```
 
 **Není součástí serveru:**
 - `resonator_engine.cpp` — miniaudio real-time audio device
 - `midi_input.cpp` — RtMidi MIDI input
+- `dsp/dsp_chain.cpp` — BBE + limiter post-processing (pouze real-time GUI path)
 - žádné audio systémové knihovny (WinMM, CoreMIDI, ALSA/JACK)
 
 ---
@@ -47,23 +46,28 @@ cmake --build build --config Release --target IthacaRenderServer
 ## Spuštění
 
 ```
-IthacaRenderServer.exe [params.json] [--verbose]
+IthacaRenderServer [params.json] [--port <N>] [--log <path>] [--no-log]
 ```
 
 | Argument | Výchozí | Popis |
 |---|---|---|
 | `params.json` | `analysis/params-ks-grand.json` | Physics parameter tabulka |
-| `--verbose` / `-v` | muted | Log výstup na stderr |
+| `--port <N>` | `9876` | TCP port, musí odpovídat `--port` klienta |
+| `--log <path>` | `analysis/runtime-logs/render-server.log` | Diagnostický log do souboru |
+| `--no-log` | — | Zakáže veškeré logování |
 
-Na startu server zapíše `{"status":"ready"}` na stdout a čeká na příkazy.
+Na startu server naváže TCP spojení na `127.0.0.1:PORT` a na každém přijatém spojení
+odešle `{"status":"ready"}` jako první řádek.
 
 ---
 
 ## Protokol
 
-**Formát:** jeden JSON objekt na řádek (stdin → příkaz, stdout → odpověď).
+**Transport:** TCP socket, `127.0.0.1:PORT`.
+**Formát:** jeden JSON objekt na řádek, zakončený `\n`.
+**Směr:** klient → server (příkaz), server → klient (odpověď).
 **Odpovědi** vždy obsahují `"status":"ok"` nebo `"status":"error","msg":"..."`.
-**stderr** je volný pro diagnostický výstup (neinterferuje s protokolem).
+**Stdin / stdout / stderr** nejsou používány vůbec.
 
 ### Příkazy
 
@@ -76,14 +80,14 @@ Ověření živosti serveru.
 
 #### `render`
 ```json
-→ {"cmd":"render","midi":60,"vel":80,"sr":44100,"duration":3.0,"output":"exports/note.wav"}
+→ {"cmd":"render","midi":60,"vel":3,"sr":44100,"duration":3.0,"output":"exports/note.wav"}
 ← {"status":"ok","frames":132300}
 ```
 | Pole | Výchozí | Popis |
 |---|---|---|
 | `midi` | — | MIDI nota (21–108) |
-| `vel` | — | MIDI velocity (1–127) |
-| `sr` | — | Sample rate v Hz |
+| `vel` | — | **Velocity band 0–7** (shodné s trénovací konvencí, viz sekci níže) |
+| `sr` | `44100` | Sample rate v Hz |
 | `duration` | `0` | Délka v sekundách; `0` = auto-detect silence tail |
 | `output` | — | Výstupní WAV cesta (parent adresáře se vytvoří automaticky) |
 
@@ -102,7 +106,7 @@ názvům fieldů v `SynthConfig` (viz `docs/SYSEX.md` — tabulka R/W parametrů
 → {"cmd":"get_config"}
 ← {"status":"ok","params":{"beat_scale":1.0,"pan_spread":0.55,...}}
 ```
-Vrátí kompletní `SynthConfig` jako JSON objekt (19 R/W parametrů).
+Vrátí kompletní `SynthConfig` jako JSON objekt (20 R/W parametrů).
 
 #### `sysex`
 ```json
@@ -118,7 +122,7 @@ Používá se pro verifikaci SysEx routování (viz `analysis/sysex_test.py --ve
 → {"cmd":"reload","params":"analysis/params-ks-grand.json"}
 ← {"status":"ok"}
 ```
-Znovu načte physics params JSON za běhu (např. po aktualizaci `extract_params.py`).
+Znovu načte physics params JSON za běhu.
 Bez `"params"` klíče použije původní cestu.
 
 #### `quit`
@@ -130,20 +134,38 @@ Server korektně ukončí smyčku a exits.
 
 ---
 
+## Velocity konvence
+
+**Render server i trénovací data používají velocity band 0–7** (ne raw MIDI 0–127).
+
+| `vel` band | Přibližný MIDI ekvivalent | vel_gain = ((band+1)/8)^γ |
+|---|---|---|
+| 0 | 0 | 0.0 (ticho) |
+| 1 | 18 | ~0.25 |
+| 3 | 54 | ~0.50 |
+| 5 | 90 | ~0.72 |
+| 7 | 127 | 1.0 |
+
+MIDI klaviatura (0–127) se mapuje automaticky ve VoiceManageru: `vel_pos = vel * 7 / 127`.
+
+---
+
 ## Python klient
 
 ```python
 from analysis.render_client import RenderClient
 
 with RenderClient("build/bin/Release/IthacaRenderServer.exe",
-                  "analysis/params-ks-grand.json") as rc:
+                  "analysis/params-nn-profile-ks-grand.json") as rc:
 
     rc.ping()
     rc.set_config(beat_scale=1.5, harmonic_brightness=0.5)
-    cfg = rc.get_config()          # dict se všemi 19 parametry
-    n = rc.render(midi=60, vel=80, duration=3.0,
-                  output="exports/m060_vel80.wav")
-    rc.reload(params="analysis/params-ks-grand.json")
+    cfg = rc.get_config()          # dict se všemi 20 parametry
+
+    # vel = velocity band 0-7
+    n = rc.render(midi=60, vel=3, duration=0.0,   # duration=0 → auto-detect
+                  output="exports/m060_vel3.wav")
+    rc.reload(params="analysis/params-nn-profile-ks-grand.json")
 ```
 
 ### Batch render
@@ -151,13 +173,13 @@ with RenderClient("build/bin/Release/IthacaRenderServer.exe",
 ```python
 from analysis.render_client import batch_render
 
-jobs = [(midi, vel, f"exports/m{midi:03d}_v{vel:03d}.wav")
-        for midi in range(21, 109) for vel in [40, 80, 110]]
+jobs = [(midi, vel, f"exports/m{midi:03d}_v{vel}.wav")
+        for midi in range(21, 109) for vel in [1, 3, 5, 7]]
 
 frame_counts = batch_render(
     "build/bin/Release/IthacaRenderServer.exe",
-    "analysis/params-ks-grand.json",
-    jobs, sr=44100, duration=3.0
+    "analysis/params-nn-profile-ks-grand.json",
+    jobs, sr=44100, duration=0.0   # duration=0 → auto-detect
 )
 ```
 
@@ -165,12 +187,7 @@ frame_counts = batch_render(
 
 ## Logování
 
-| Kontext | Logger nastavení |
-|---|---|
-| Výchozí (headless, subprocess) | muted — žádný výstup |
-| `--verbose` flag | stderr — diagnostické zprávy |
-
-Stdout je vyhrazen výhradně pro JSON protokol.
+Všechna diagnostika jde do souboru `--log`. Stdin/stdout/stderr nejsou použity vůbec.
 
 ---
 
@@ -183,9 +200,10 @@ Stdout je vyhrazen výhradně pro JSON protokol.
 - **Sdílený DSP kód**: `RENDER_SYNTH_SOURCES` ⊂ `SYNTH_SOURCES` v `CMakeLists.txt`.
   Změna enginu se propaguje do všech targetů při buildu.
 - **Post-render RMS normalizace**: `OfflineRenderer::renderNote()` po celkovém renderu
-  přepočítá skutečný RMS a normalizuje výstup na `target_rms * vel_gain` — stejný postup jako
-  Python `synthesize_note()`. Opravuje inter-string fázové cross-termy (náhodné počáteční fáze
-  způsobují rozptyl ±50 % u not s málo parciály). Výsledný RMS je vždy přesně `target_rms * vel_gain`.
-- **`render_ref_duration_s`** (SynthConfig, SysEx ID 0x5005): referenční délka pro level_scale
-  formuli v real-time syntéze. Pro IthacaRenderServer nemá vliv na výstupní úroveň (post-normalizace).
-  Výchozí 3.0 s odpovídá Python `render(duration=3.0)`.
+  přepočítá skutečný RMS a normalizuje výstup na `target_rms * vel_gain`. Opravuje
+  inter-string fázové cross-termy (náhodné počáteční fáze způsobují rozptyl u not
+  s málo parciály). Výsledný RMS je přesně `target_rms * vel_gain`.
+- **Crest factor u vysokých not**: při `duration=0` (auto-detect) se normalizace počítá
+  přes skutečně vyrendovanou délku → správné výsledky. Při fixní `duration=3.0` u krátkých
+  not (m096–m108, rychlý útlum) může normalizace nadměrně zesílit počáteční transient.
+  Pro export vzorků doporučujeme `duration=0`.

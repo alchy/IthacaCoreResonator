@@ -124,6 +124,9 @@ def parse_args() -> argparse.Namespace:
                    help='Closed-loop MRSTFT fine-tuning po NN tréninku')
     p.add_argument('--ft-epochs',    type=int,   default=200,
                    help='Epochy fine-tuningu (default: 200)')
+    p.add_argument('--ft-render-dir', default=None,
+                   help='Ukládat WAV checkpointy per epochu (timestamp přidán automaticky, '
+                        'např. exports/finetune-samples → exports/finetune-samples-20260331-0810)')
     # Přeskočení kroků
     p.add_argument('--skip-outlier', action='store_true',
                    help='Přeskočit krok 2 (outlier removal)')
@@ -228,14 +231,17 @@ def main() -> int:
     # ── Krok 5 — Closed-loop MRSTFT fine-tuning (volitelný) ──────────────────
     if args.start_at <= 5 and args.finetune:
         _banner(5, f"Closed-loop MRSTFT fine-tuning ({args.ft_epochs} epoch)")
-        ok = _run(_python(
+        ft_cmd = [
             "analysis/closed_loop_finetune.py",
             "--mode",    "finetune",
             "--model",   str(profile_pt),
             "--out",     str(profile_pt),   # přepsat in-place
             "--bank",    str(bank_dir),
             "--epochs",  str(args.ft_epochs),
-        ), args.dry_run)
+        ]
+        if args.ft_render_dir:
+            ft_cmd += ["--render-dir", args.ft_render_dir]
+        ok = _run(_python(*ft_cmd), args.dry_run)
         if not ok:
             return 1
     elif not args.finetune and args.start_at <= 5:

@@ -78,9 +78,13 @@ std::vector<float> OfflineRenderer::renderNote(int   midi,
     // Stop any lingering voices
     vm_.stopAllVoices();
 
-    // Trigger the note
-    vm_.setNoteStateMIDI(static_cast<uint8_t>(midi), true,
-                          static_cast<uint8_t>(vel));
+    // vel is velocity band 0-7 (Python training convention).
+    // Clamp defensively, then convert to equivalent MIDI velocity so
+    // handleNoteOn maps back to the correct LUT layer and vel_band.
+    // Formula: midi_vel = band * 127 / 7 round-trips through vel_pos = midi_vel*7/127.
+    const int     vel_band  = std::clamp(vel, 0, 7);
+    const uint8_t midi_vel  = static_cast<uint8_t>(vel_band * 127 / 7);
+    vm_.setNoteStateMIDI(static_cast<uint8_t>(midi), true, midi_vel);
 
     // Determine sample budget
     const float  max_dur   = (duration_s > 0.f) ? duration_s : MAX_DURATION_S;
@@ -144,9 +148,10 @@ std::vector<float> OfflineRenderer::renderNote(int   midi,
         for (int i = 0; i < (int)out.size(); i += 2)
             sum_sq += (double)out[i]*out[i] + (double)out[i+1]*out[i+1];
         const float actual_rms = static_cast<float>(std::sqrt(sum_sq / (2.0 * n_frames)));
-        // Must match resonator_voice.cpp: ((vel+1)/8)^gamma
-        const float vel_gain   = (vel > 0)
-            ? std::pow((float)(vel + 1) / 8.f, cfg_.vel_gamma)
+        // Must match resonator_voice.cpp: ((vel_band+1)/8)^gamma
+        // Use vel_band (0-7, clamped above) — same formula as the voice.
+        const float vel_gain   = (vel_band > 0)
+            ? std::pow((float)(vel_band + 1) / 8.f, cfg_.vel_gamma)
             : 0.f;
         const float target_rms = cfg_.target_rms * vel_gain;
         if (actual_rms > 1e-8f && target_rms > 0.f) {

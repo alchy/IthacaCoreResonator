@@ -253,12 +253,26 @@ else()
     target_link_libraries(IthacaRenderServer PRIVATE pthread m dl)
 endif()
 
+# ── Copy soundbanks/ next to each executable ─────────────────────────────────
+#
+# soundbanks/ is always accessible at <exe_dir>/soundbanks/ regardless of
+# working directory. Copies happen after each build so new profiles are picked up.
+
+foreach(_target IthacaCoreResonator IthacaCoreResonatorGUI IthacaRenderServer)
+    add_custom_command(TARGET ${_target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/soundbanks
+            $<TARGET_FILE_DIR:${_target}>/soundbanks
+        COMMENT "Copying soundbanks/ -> $<TARGET_FILE_DIR:${_target}>/soundbanks"
+    )
+endforeach()
+
 # ── Custom targets ────────────────────────────────────────────────────────────
 
 add_custom_target(run
-    COMMAND IthacaCoreResonator
+    COMMAND IthacaCoreResonator --params soundbanks/salamander.json
     DEPENDS IthacaCoreResonator
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Release
 )
 
 add_custom_target(clean-exports

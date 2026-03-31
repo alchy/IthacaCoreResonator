@@ -147,11 +147,12 @@ Also cross-product combinations `f_i ± f_j` (stronger in bass/forte).
    the field; C++ side is ready.
 
 **Phase B — Medium effort, high impact:**
-4. Phantom partials (longitudinal) — C++ side ready:
-   - `PartialParams::is_longitudinal` flag added; `is_longitudinal=true` forces `mono=true`.
-   - Rendered identically to transverse partials but with `f≈2·f_k`, `τ≈τ/2`, single-string, no beating.
-   - ✅ C++ render path complete. **Pending**: `resonators/analysis::extract-params.py` extension
-     to detect longitudinal peaks and emit `"is_longitudinal": true` entries in `params.json`.
+4. ✅ Phantom partials (longitudinal) — fully implemented end-to-end:
+   - `PartialParams::is_longitudinal` flag; `is_longitudinal=true` forces `mono=true`.
+   - Rendered identically to transverse partials at `f≈2·f_k`, `τ≈τ/2`, single-string, no beating.
+   - `extract_params.py::detect_longitudinal_partials()` detects peaks at `2·f_k` in spectrum.
+   - `params-ks-grand.json`: 886 longitudinal partial entries across 224 bass samples (midi ≤ 48).
+   - `note_lut.cpp`: loads `is_longitudinal` flag and sets `mono=true` automatically.
 5. ✅ Longitudinal precursor (bass, MIDI < 50) — short high-frequency noise burst at noteOn
    for bass notes. Controlled by `SynthConfig::longitudinal_precursor` (default 0.0 = off).
    Duration auto-scaled to 2 string cycles (≈ 2/f₀), capped at 10 ms.
@@ -166,3 +167,92 @@ Also cross-product combinations `f_i ± f_j` (stronger in bass/forte).
    space interpolation (Simionato 2024 model).
 8. For latent space: model instrument interpolation via soundboard mobility proxy, not raw
    param vectors (MAESSTRO recommendation).
+
+---
+
+## Python vs C++ Synthesis Cross-Check
+
+Cross-check provedený 2026-03-31. Porovnává `analysis/physics_synth.py` (Python reference)
+s `synth/resonator_voice.cpp` (C++ realtime) a `analysis/torch_synth.py` (proxy pro MRSTFT gradient).
+
+### Zjištěné rozdíly
+
+#### 1. EQ blending — nejzásadnější rozdíl
+
+| | Implementace |
+|---|---|
+| **Python** `physics_synth.py` | `H_blend = 1.0 + strength × (H − 1.0)` — lineární blend v amplitudě |
+| **C++** `resonator_voice.cpp` | `eq_gains_db[i] × eq_strength` — násobení v dB |
+
+Při `eq_strength = 1.0` jsou výsledky shodné. Při jiných hodnotách (live tweaking slidery) se
+chování liší — Python interpoluje spektrum k flat, C++ škáluje dB hodnoty.
+
+#### 2. Inicializace fáze
+
+| | Implementace |
+|---|---|
+| **Python** | Seedováno per nota → reprodukovatelné rendery |
+| **C++** | Globální `std::rand()` bez seedu per nota → náhodné, mění se mezi spuštěními |
+
+#### 3. „No beat" větev
+
+| | Implementace |
+|---|---|
+| **Python** | `if beat < 0.05`: všechny struny na stejné frekvenci (bez detuning) |
+| **C++** | Vždy detuned; žádná taková větev neexistuje |
+
+#### 4. Pořadí onset rampy
+
+| | Pořadí |
+|---|---|
+| **Python** | Onset aplikován jako poslední — po EQ + stereo width |
+| **C++** | Onset po EQ, ale **před** Schroeder decorrelation |
+
+#### 5. Noise scaling
+
+| | Implementace |
+|---|---|
+| **Python** | Šum přidán **před** RMS normalizací → relativní vůči signálu |
+| **C++** | `floor_rms × noise_level × target_rms × vel_gain` → absolutní škálování |
+
+#### 6. Peak clip guard
+
+| | Implementace |
+|---|---|
+| **Python** | `scale = min(target_rms / rms, 0.95 / peak)` — chrání před clippingem |
+| **C++** | Chybí |
+
+#### 7. Velocity konvence — live vs. offline
+
+| | Konvence |
+|---|---|
+| **C++ live** (`noteOn`) | Raw MIDI velocity 0–127 |
+| **C++ offline / RenderServer** | vel_band 0–7 (stejná konvence jako Python/training) |
+| **Python / torch_synth** | vel_band 0–7 |
+
+#### 8. Funkce pouze v C++ (bez Python ekvivalentu)
+
+- Pitch glide (portamento při forte)
+- Longitudinal precursor (prasknutí struny při basech, MIDI < 50)
+- BBE enhancement + limiter (post-processing)
+- Schroeder all-pass decorrelation (stereo)
+
+#### 9. `torch_synth.py` — záměrná zjednodušení
+
+`torch_synth.py` je diferenciabilní proxy pro MRSTFT gradient, **není** přesnou replikou C++:
+
+| Zjednodušení | Důvod |
+|---|---|
+| Vždy mono | Gradient stabilita |
+| Vždy 2 struny (bez větvení dle MIDI) | Jednodušší autograd graf |
+| `phi_diff` parametr navíc (phi_net) | Modeluje fázový offset 2. struny |
+| Bez IIR noise filtrů | Neimplementováno v proxy |
+| Bez EQ | EQ přidáno do supervizovaného tréninku zvlášť |
+| Bez onset rampy | Neimplementováno v proxy |
+| Bez bi-exp větvení (vždy bi-exp) | Jednodušší |
+
+### Dopad na trénink
+
+- **EQ blending** rozdíl neovlivňuje trénink — při evaluaci a finetuning se používá `eq_strength=1.0`.
+- **Noise scaling** může způsobit mírnou divergenci při extrémních hodnotách `noise_level`.
+- **torch_synth zjednodušení** jsou záměrná — proxy nemusí být přesná replika, jen dostatečně dobrá pro gradient signal.

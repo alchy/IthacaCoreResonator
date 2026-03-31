@@ -10,20 +10,56 @@ Popis celého procesu od WAV banky po profil pro IthacaCoreResonator syntezér.
 WAV banka  (m060-vel3-f44.wav, ...)
     |
     v  extract_params.py
-params-<banka>.json          fyzikalni parametry (B, tau, A0, f0, sum, ...)
+params-<banka>.json              fyzikalni parametry (B, tau, A0, f0, beat_hz, ...)
     |
-    v  find_outliers.py      (--drop)
-params-<banka>.json          bez chybne extrahovanych samplov
+    v  find_outliers.py --drop
+params-<banka>.json              bez chybne extrahovanych samplov
     |
     v  compute_spectral_eq.py
-params-<banka>.json          + LTASE EQ krivka (telova rezonance)
+params-<banka>.json              + LTASE EQ krivka (telova rezonance)
     |
     v  train_instrument_profile.py
-params-nn-profile-<banka>.json   NN-smoothed profil pro 88 x 8 pozic
-profile-<banka>.pt               vahy surrogate modelu
+profile-<banka>-nn.pt            vahy surrogate modelu po NN treninku (99 214 params)
+params-<banka>-nn.json           NN-smoothed profil pro 88 x 8 pozic  ← vstup pro ICR
     |
-    v  closed_loop_finetune.py   (volitelny)
-profile-<banka>.pt               doladeny model (MRSTFT fine-tuning)
+    v  closed_loop_finetune.py --mode finetune   (volitelny)
+profile-<banka>-ft.pt            doladeny model po MRSTFT fine-tuningu
+    |
+    v  train_instrument_profile.py --epochs 0    (regenerace JSON z ft modelu)
+params-<banka>-ft.json           fine-tuned profil pro 88 x 8 pozic   ← vstup pro ICR
+    |
+    v  closed_loop_finetune.py --mode global     (volitelny)
+params-<banka>-ft.synth_config.json   optimalizovane globalni SynthConfig (beat_scale, noise_level)
+```
+
+---
+
+## Konvence pojmenovani souboru
+
+Vsechny soubory sdileji nazev banky a suffix oznacujici treninkovou fazi:
+
+| Faze | Model `.pt` | Params `.json` pro ICR |
+|------|-------------|------------------------|
+| Raw extrakce (kroky 1–3) | — | `params-<banka>.json` |
+| NN trenink (krok 4) | `profile-<banka>-nn.pt` | `params-<banka>-nn.json` |
+| MRSTFT fine-tuning (krok 5) | `profile-<banka>-ft.pt` | `params-<banka>-ft.json` |
+| Global opt (krok 5b) | — | `params-<banka>-ft.synth_config.json` |
+
+**Pravidla:**
+- `<banka>` je vzdy jmeno WAV banky (pr. `ks-grand`) — v nazvu `.pt` i `.json`
+- Suffix `-nn` = vystup z `train_instrument_profile.py` (EQ-supervised NN)
+- Suffix `-ft` = vystup z `closed_loop_finetune.py --mode finetune` (MRSTFT dolazeni)
+- `params-<banka>-ft.json` se generuje znovu z `profile-<banka>-ft.pt` pres `train_instrument_profile.py --epochs 0` (jen inference, bez dalsiho treninku)
+- Syntezator (GUI/CLI) vzdy nacita `.json`, ne `.pt` — pouzij nejnovejsi fazi
+
+**Priklad pro banku `ks-grand`:**
+```
+analysis/params-ks-grand.json                  raw extrakce
+analysis/profile-ks-grand-nn.pt                NN model
+analysis/params-ks-grand-nn.json               profil po NN treninku
+analysis/profile-ks-grand-ft.pt                finetuned model
+analysis/params-ks-grand-ft.json               profil po fine-tuningu
+analysis/params-ks-grand-ft.synth_config.json  globalni SynthConfig
 ```
 
 ---
@@ -87,7 +123,7 @@ cmake -S . -B build
 
 ## Spusteni render serveru
 
-### Ruční start
+### Rucni start
 
 ```bash
 build/bin/Release/IthacaRenderServer.exe \
@@ -130,6 +166,7 @@ sys.path.insert(0, '.')
 from analysis.render_client import RenderClient
 import time
 
+# vel = velocity band 0-7 (odpovidaji trenovacim datum)
 notes = [(21,3,'A0'),(48,3,'C3'),(60,3,'C4'),(84,5,'C6'),(96,5,'C7'),(108,7,'C8')]
 
 with RenderClient('build/bin/Release/IthacaRenderServer.exe',
@@ -144,13 +181,17 @@ with RenderClient('build/bin/Release/IthacaRenderServer.exe',
 
 Vystup:
 ```
-A0  m021 vel3: 15.0s -> exports/sample_A0_vel3.wav   [1.41s]
-C3  m048 vel3: 11.5s -> exports/sample_C3_vel3.wav   [2.28s]
-C4  m060 vel3: 12.1s -> exports/sample_C4_vel3.wav   [2.75s]
-C6  m084 vel5:  1.0s -> exports/sample_C6_vel5.wav   [0.07s]
-C7  m096 vel5:  2.5s -> exports/sample_C7_vel5.wav   [0.09s]
-C8  m108 vel7:  7.9s -> exports/sample_C8_vel7.wav   [0.27s]
+A0  m021 vel3: 15.0s -> exports/sample_A0_vel3.wav   [~1.4s]
+C3  m048 vel3: 13.2s -> exports/sample_C3_vel3.wav   [~2.3s]
+C4  m060 vel3:  6.9s -> exports/sample_C4_vel3.wav   [~1.5s]
+C6  m084 vel5:  1.0s -> exports/sample_C6_vel5.wav   [~0.1s]
+C7  m096 vel5:  0.8s -> exports/sample_C7_vel5.wav   [~0.1s]
+C8  m108 vel7:  0.6s -> exports/sample_C8_vel7.wav   [~0.1s]
 ```
+
+**Velocity konvence:** render server pouziva velocity BAND 0-7 (odpovidaji trenovacim datum:
+`m060-vel3-f44.wav` → vel=3). Pro priehrávání z MIDI klaviatury (0-127) VoiceManager automaticky
+mapuje: `vel_band = round(midi_vel * 7 / 127)`.
 
 **Rychlost (Release, AVX2, i5-12th gen):** bass noty ~1.4 s/nota, treble < 0.3 s/nota.
 
@@ -166,7 +207,7 @@ for midi, vel, name in notes:
     audio, sr = sf.read(f'exports/sample_{name}_vel{vel}.wav',
                          dtype='float32', always_2d=True)
     rms      = math.sqrt((np.mean(audio[:,0]**2) + np.mean(audio[:,1]**2)) / 2)
-    vel_gain = ((vel + 1) / 8.0) ** vel_gamma
+    vel_gain = ((vel + 1) / 8.0) ** vel_gamma   # vel = band 0-7
     expected = target_rms * vel_gain
     print(f'{name}: rms={rms:.5f}  expected={expected:.5f}  ratio={rms/expected:.4f}')
 
@@ -262,53 +303,67 @@ python -u analysis/train_instrument_profile.py \
 
 ### Architektura (faktorizovana NN)
 
-| Sit | Vstup | Vystup | Zavislost |
-|---|---|---|---|
-| `B_net` | (midi) | log(B) | vel-nezavisla |
-| `tau1_k1_net` | (midi, vel) | log(tau1) pro k=1 | vel-zavisla |
-| `tau_ratio_net` | (midi, k) | log(tau_k/tau_k1) | vel-nezavisla |
-| `A0_net` | (midi, k, vel) | log(A0_ratio) | vel-zavisla |
-| `df_net` | (midi, k) | log(beat_hz) | vel-nezavisla |
-| `eq_net` | (midi, freq) | gain_db | vel-nezavisla |
-| `noise_net` | (midi, vel) | log(attack_tau), log(centroid), log(A_noise) | vel-zavisla |
-| `biexp_net` | (midi, k, vel) | logit(a1), log(tau2/tau1) | vel-zavisla |
-| `dur_net` | (midi) | log(duration_s) | vel-nezavisla |
+| Sit | Vstup | Vystup | Zavislost | Gradient skrze proxy |
+|---|---|---|---|---|
+| `B_net` | (midi) | log(B) | vel-nezavisla | ano — frekvence parcialu |
+| `tau1_k1_net` | (midi, vel) | log(tau1) pro k=1 | vel-zavisla | ano — utlumove obalky |
+| `tau_ratio_net` | (midi, k) | log(tau_k/tau_k1) | vel-nezavisla | ano — utlumove obalky |
+| `A0_net` | (midi, k, vel) | log(A0_ratio) | vel-zavisla | ano — amplitudy |
+| `df_net` | (midi, k) | log(beat_hz) | vel-nezavisla | ano — beating frekvence |
+| `phi_net` | (midi, vel) | phi_diff (rad) | vel-zavisla | ano — pocatecni faze strun |
+| `biexp_net` | (midi, k, vel) | logit(a1), log(tau2/tau1) | vel-zavisla | ano — bi-exp obalka |
+| `noise_net` | (midi, vel) | log(attack_tau), log(centroid), log(A_noise) | vel-zavisla | ano — sumova obalka |
+| `eq_net` | (midi, freq) | gain_db | vel-nezavisla | ne (proxy EQ nema) |
+| `wf_net` | (midi) | log(width_factor) | vel-nezavisla | ne (proxy je mono) |
+| `dur_net` | (midi) | log(duration_s) | vel-nezavisla | ne |
 
 Vsechny kladne vystupy trenovane v log-space (MSE na log hodnotach = geometricka chyba).
+
+**Poznamka k phi_net:** pocitaci faze phi_diff = faze2 - faze1 mezí dvema strunami parcials.
+- phi_diff = 0: konstruktivni interference → maximalni utok
+- phi_diff = π: destruktivni interference → minimalni utok, maximalni beating
+- Init bias = 0 (konstruktivni), site se uci optimalni fazi per (midi, vel)
 
 ### Typicka konvergence (ks-grand, 1800 epoch, CPU i5-12th gen, ~25 min)
 
 ```
 Available measured samples: 704
 Train/eval split: 632 train, 72 eval
-Model parameters: 90,189
+Model parameters: 99,214
 
-epoch  100/1800  loss=0.914945  lr=2.98e-03  eval=1.617853
-epoch  300/1800  loss=0.860287  lr=2.80e-03  eval=1.259550
-epoch  600/1800  loss=0.837567  lr=2.26e-03  eval=1.234982
-epoch  900/1800  loss=0.794354  lr=1.51e-03  eval=1.159825
-epoch 1200/1800  loss=0.775356  lr=7.73e-04  eval=1.107646
-epoch 1500/1800  loss=0.766831  lr=2.29e-04  eval=1.102404
-epoch 1800/1800  loss=0.764882  lr=3.00e-05  eval=1.101438
+epoch  100/1800  loss=1.133206  lr=2.98e-03  eval=1.507818
+epoch  300/1800  loss=1.070663  lr=2.80e-03  eval=1.213169
+epoch  600/1800  loss=1.030450  lr=2.26e-03  eval=1.258982
+epoch  900/1800  loss=0.989487  lr=1.51e-03  eval=1.286126
+epoch 1200/1800  loss=0.973444  lr=7.73e-04  eval=1.285231
+epoch 1500/1800  loss=0.968038  lr=2.29e-04  eval=1.288656
+epoch 1800/1800  loss=0.966700  lr=3.00e-05  eval=1.288875
 
 Model saved -> analysis/profile.pt
 Written -> analysis/params-nn-profile-ks-grand.json
   NN-interpolated: 0  |  Measured originals: 704
 ```
 
+Poznamka: `eval` obsahuje jak physics loss tak EQ MSE loss (`eval = physics + 0.1 * eq_mse`).
+Vysledny eval ~1.29 odpovida physics eval ~1.14 + 0.1 × eq_mse ~0.15.
+Bez EQ termu (stary trening) byl eval=1.101 — to bylo nize, protoze eq_net nebyl supervizovan.
+
 ### Vystupy
 
 - `analysis/profile.pt` — format: `{"state_dict": ..., "hidden": 64, "eq_freqs": [...]}`
 - `analysis/params-nn-profile-ks-grand.json` — 704 samplov, originaly zachovany (`_interpolated: false`)
 
+**Zpetna kompatibilita:** `closed_loop_finetune.load_model()` pouziva `strict=False` → existujici
+`profile.pt` (bez phi_net) se nacte a phi_net se inicializuje nahodne (pote uci se pres MRSTFT).
+
 ---
 
-## Krok 5 — Closed-loop MRSTFT fine-tuning (volitelny)
+## Krok 5 — Closed-loop MRSTFT fine-tuning
 
 **Skript:** `analysis/closed_loop_finetune.py`
 
-Doladi vahu NN minimalizaci Multi-Resolution STFT Loss (MRSTFT) oproti originalnim WAV nahravkam.
-Gradient tece pres diferencovatelny proxy synth (torch_synth.py).
+Doladi vahy NN (nebo globalni SynthConfig) minimalizaci Multi-Resolution STFT Loss (MRSTFT)
+oproti originalnim WAV nahravkam. Gradient tece pres diferencovatelny proxy synth (`torch_synth.py`).
 
 ### MRSTFT Loss
 
@@ -322,6 +377,27 @@ Kombinuje 3 FFT velikosti pro pokryti ruznych casovych skal:
 
 Pro kazdou skalu: **spectral convergence** + **log-magnitude** chyba → prumer.
 
+### Diferencovatelny proxy synth (torch_synth.py)
+
+Proxy pouziva 2-string model per parcial (oproti puvodnimu 1-string):
+
+```
+Kazdy parcial k:
+  f+ = f_k + beat_hz_k / 2     (struna 1)
+  f- = f_k - beat_hz_k / 2     (struna 2)
+
+  s1 = cos(2π * f+ * t + phi1)
+  s2 = cos(2π * f- * t + phi1 + phi_diff)
+  parcial = A0_k * env_k(t) * (s1 + s2) / 2
+
+  phi_diff = phi_net(midi, vel) ... skalarna hodnota per nota
+  beat_hz_k = exp(df_net(midi, k)) * beat_scale
+```
+
+Gradient tece pres: `B_net` (frekvence), `tau nets` (obalky), `A0_net` (amplitudy),
+`biexp_net` (bi-exp obalka), `df_net` (beating), `phi_net` (pocatecni faze strun),
+`noise_net` (sum). `beat_scale` a `noise_level` mohou byt tenzory → gradient skrze ne.
+
 ### Evaluace (bez update)
 
 ```bash
@@ -332,26 +408,7 @@ python analysis/closed_loop_finetune.py \
     --log   analysis/runtime-logs/finetune.log
 ```
 
-Vystup (vybrane not, ks-grand, proxy synth vs original, mono, 3s crop):
-```
-m021 vel3  MRSTFT=3.6584
-m036 vel3  MRSTFT=3.2573
-m048 vel3  MRSTFT=3.8912
-m060 vel3  MRSTFT=3.4201
-m072 vel5  MRSTFT=2.6781
-m084 vel5  MRSTFT=4.0683
-m096 vel5  MRSTFT=7.9246
-m108 vel7  MRSTFT=6.8498
--- mean MRSTFT = 6.8891  (704/704 notes) --
-```
-
-Vyssi MRSTFT = vetsi rozdil proxy vs original. Bass noty (MIDI 21-48) maji nizssi ztatu
-diky vice parcialu v audibilnim pasu. Treble noty (MIDI 96+) maji jen 2-5 parcialu — NN
-extrapoluje a MRSTFT je vyssi.
-
-**Log:** `analysis/runtime-logs/finetune.log`
-
-### Fine-tuning s prubeznymi WAV vzorky
+### Fine-tuning NN vah
 
 ```bash
 python analysis/closed_loop_finetune.py \
@@ -363,10 +420,15 @@ python analysis/closed_loop_finetune.py \
     --lr           3e-4 \
     --batch-size   8 \
     --eval-every   20 \
+    --k-max        40 \
+    --duration     3.0 \
     --render-dir   exports/finetune-samples \
-    --sample-notes "21:3,48:3,60:3,84:5,96:5" \
+    --sample-notes "21:3,48:3,60:3,84:5,96:5,108:7" \
     --log          analysis/runtime-logs/finetune.log
 ```
+
+`--sample-notes`: format `"midi:vel,midi:vel,..."` — zachycuje bas (21), stred (48,60),
+diskant (84), treble forte (96,108). Ulozi se pro kazdy eval checkpoint.
 
 **`--render-dir`**: pri kazdem eval checkpointu ulozi WAV vzorky via proxy synth:
 ```
@@ -377,49 +439,81 @@ exports/finetune-samples/
         m060_vel3.wav   # stredni C
         m084_vel5.wav   # C6 forte
         m096_vel5.wav   # C7 forte
+        m108_vel7.wav   # C8 fff
     epoch-0020/
-        m021_vel3.wav
         ...
     epoch-0200/
         ...
 ```
 
-Tyto soubory jsou mono (proxy synth), zakladni kvalita — pro finalni stereo vzorky pouzij IthacaRenderServer.
+### Regenerace JSON profilu z finetuned modelu
 
-**Log:** `analysis/runtime-logs/finetune.log`
+Po fine-tuningu obsahuje `profile-<banka>-ft.pt` nove vahy, ale syntetizator nacita **JSON**,
+ne `.pt`. JSON je treba pregenerovat pres inferenci (bez dalsiho treninku — `--epochs 0`):
 
+```bash
+python -u analysis/train_instrument_profile.py \
+    --in     analysis/params-ks-grand.json \
+    --out    soundbanks/params-ks-grand-ft.json \
+    --model  analysis/profile-ks-grand-ft.pt \
+    --epochs 0
 ```
--- Fine-tune: 704 reference notes, batch=8, epochs=200, lr=0.0003 --
 
-[epoch 0 / 200] initial evaluation:
-  m021 vel0  MRSTFT=5.9474
-  m021 vel3  MRSTFT=3.6584
-  ...
-  -- mean MRSTFT = 6.8891  (704/704 notes) --
-  sample -> m021_vel3.wav
-  sample -> m060_vel3.wav
-  ...
+- `--in`: puvodni namerena banka (raw extrakce, bez zmeny)
+- `--out`: cilovy JSON pro ICR — do `soundbanks/` podle konvence pojmenovani
+- `--model`: finetuned checkpoint `.pt`
+- `--epochs 0`: preskoci gradient update, jen spusti inferenci pro vsech 88×8 pozic
 
-[epoch   10/200] loss=6.7123  lr=3.00e-04  t=347.2s
-[epoch   20/200] loss=6.5891  lr=2.99e-04  t=344.1s
+Trva cca 10–30 sekund. Vystup je kompatibilni se vsemi binarkami (ICR, GUI, RenderServer).
 
-[epoch 20 eval]
-  -- mean MRSTFT = 6.6120  (704/704 notes) --
-  new best: 6.6120
-  sample -> m021_vel3.wav
-  ...
+---
+
+### Globalni SynthConfig optimalizace
+
+Optimalizuje skalarne parametry SynthConfig (beat_scale, noise_level) s NN vahy zmrazenymi.
+Gradienty tecou pres `torch_synth.render_note_differentiable()` → MRSTFT.
+
+```bash
+python analysis/closed_loop_finetune.py \
+    --mode global \
+    --model analysis/profile-finetuned.pt \
+    --bank  "C:/SoundBanks/IthacaPlayer/ks-grand" \
+    --opt-params beat_scale,noise_level \
+    --epochs 100 \
+    --lr     0.05 \
+    --log    analysis/runtime-logs/finetune-global.log
+```
+
+Vystup JSON: `analysis/profile.synth_config.json` (nebo `--config-out <path>`)
+```json
+{
+  "beat_scale": 1.234,
+  "noise_level": 0.876
+}
+```
+
+Pouziti ve serveru:
+```python
+with RenderClient(...) as rc:
+    import json
+    cfg = json.load(open("analysis/profile.synth_config.json"))
+    rc.set_config(cfg)
 ```
 
 ### Rychlost (CPU, i5-12th gen)
 
-- 1 gradient krok (1 nota, k_max=40, duration=3s): ~0.5 s
-- 1 epocha (704 not, batch=8): ~6 min (88 kroku x ~4s)
-- Plny eval (704 not, no grad): ~2.5 min
-- Cely run (200 epoch + 10 evalu): ~23 hodin
+Merenou na run s `--k-max 40 --duration 3.0 --batch-size 8`:
+
+- 1 gradient krok (batch 8 not, k_max=40, duration=3s): ~15–20 s
+- 1 epocha (704 not, batch=8): ~2–3 min (88 kroku)
+- Plny eval (704 not, no grad): ~1 min
+- Cely run (200 epoch + 10 evalu): ~7–10 hodin
+
+S vychozim `--k-max 60` (bez explicitniho omezeni) je cas ~2× vyssi (vice parcialu).
 
 **Doporuceni pro rychlejsi run:**
 ```bash
-# Kratsi vzorky + mene parcialu = ~3x rychlejsi
+# Kratsi vzorky + mene parcialu = ~3-4x rychlejsi
 python analysis/closed_loop_finetune.py \
     --mode finetune \
     --model analysis/profile.pt \
@@ -427,28 +521,41 @@ python analysis/closed_loop_finetune.py \
     --duration 1.5 \
     --k-max    20 \
     --epochs   100
-# 1 epocha: ~1.5 min, cely run: ~4 hod
+# 1 epocha: ~45 s, cely run: ~2 hod
 ```
 
 ### Gradient path (co se uci)
 
 ```
 NN vahy
-  +--> B_net       --> frekvence parcialu (f_k = k*f0*sqrt(1+B*k^2))
-  +--> tau1_k1_net --> utlumove obalky (tau1)
-  +--> tau_ratio   --> utlumove obalky (tau_k / tau_k1)
-  +--> A0_net      --> amplitudy parcialu
-  +--> biexp_net   --> bi-exponencialni obalka (a1, tau2/tau1)
-  +--> noise_net   --> sumova obalka (A_noise, attack_tau)
+  +--> B_net         --> frekvence parcialu (f_k = k*f0*sqrt(1+B*k^2))
+  +--> tau1_k1_net   --> utlumove obalky (tau1)
+  +--> tau_ratio_net --> utlumove obalky (tau_k / tau_k1)
+  +--> A0_net        --> amplitudy parcialu
+  +--> biexp_net     --> bi-exponencialni obalka (a1, tau2/tau1)
+  +--> df_net        --> beating frekvence per parcial
+  +--> phi_net       --> pocatecni relativni faze strun
+  +--> noise_net     --> sumova obalka (A_noise, attack_tau)
        |
-       v  proxy synth (torch_synth.py, mono)
+       v  proxy synth 2-string (torch_synth.py, mono)
+          s1 = cos((f+df/2)*t + phi1)
+          s2 = cos((f-df/2)*t + phi1 + phi_diff)
+          parcial = A0 * env * (s1+s2)/2
        |
-       v  MRSTFT loss vs original WAV (mrstft_loss.py)
+       v  MRSTFT loss vs original WAV (mrstft_loss.py, 3 skaly)
        |
        v  loss.backward() --> optimizer.step()
+
+SynthConfigParams (--mode global, NN zmrazena)
+  +--> log_beat_scale  --> beat_hz_k *= beat_scale
+  +--> log_noise_level --> A_noise * noise_level
+       |
+       v  (stejna proxy render cesta)
+       |
+       v  MRSTFT loss --> optimizer.step()
 ```
 
-df_net, eq_net, wf_net, dur_net nemaji gradient skrze proxy (proxy je nezahrnuje).
+`eq_net`, `wf_net`, `dur_net` gradient skrze proxy nemaji (proxy EQ nema, je mono).
 
 ---
 
@@ -486,6 +593,26 @@ python analysis/train_pipeline.py \
 
 ---
 
+## Velocity konvence
+
+**Trenovaci data:** vel = band 0-7 (WAV soubory `m060-vel3-f44.wav`)
+
+**Render server** (`IthacaRenderServer`, `RenderClient`): vel = band 0-7
+
+**MIDI vstup** (klaviatura, plugin): vel = raw MIDI 0-127, VoiceManager mapuje automaticky:
+```
+vel_pos  = midi_vel * 7 / 127   // 0.0 - 7.0 float pro LUT interpolaci
+vel_band = round(vel_pos)        // 0-7 pro amplitudovy vzorec
+```
+
+**Amplitudovy vzorec** (stejny ve vsech mistech):
+```
+vel_gain = ((vel_band + 1) / 8)^vel_gamma
+```
+Max vel_gain = 1.0 (pro vel_band=7), target_rms=0.06 → max RMS = 0.06 bez clippingu.
+
+---
+
 ## Integrace se syntezatorem
 
 Po treninku pouzij JSON profil jako vstup pro IthacaRenderServer:
@@ -508,7 +635,9 @@ build/bin/Release/IthacaRenderServer.exe \
 |---|---|---|
 | `analysis/params-<banka>.json` | namere fizikalni parametry | extract_params.py |
 | `analysis/params-nn-profile-<banka>.json` | NN-smoothed profil (88x8) | train_instrument_profile.py |
-| `analysis/profile-<banka>.pt` | vahy surrogate modelu | train_instrument_profile.py |
+| `analysis/profile.pt` | vahy surrogate modelu (99 214 params) | train_instrument_profile.py |
+| `analysis/profile-finetuned.pt` | doladeny model po MRSTFT fine-tuningu | closed_loop_finetune.py |
+| `analysis/profile.synth_config.json` | optimalizovane SynthConfig (global mode) | closed_loop_finetune.py |
 | `build/bin/Release/IthacaRenderServer.exe` | headless render server | cmake --build |
 | `exports/*.wav` | renderovane vzorky | IthacaRenderServer / finetune |
 | `exports/finetune-samples/epoch-NNNN/*.wav` | prubehu vzorky z fine-tuningu | closed_loop_finetune.py |
@@ -559,6 +688,39 @@ python analysis/closed_loop_finetune.py \
     --k-max 20 --duration 1.5
 ```
 
+### MRSTFT finetune: loss = NaN po epochach 80-130
+
+**Projev:** loss klesa normalne do epochy ~80-100, pak narazove skoci na NaN a zustava NaN.
+Vzorky z epochy pred NaN znejo normalne; vzorky v epose NaN obsahuji 100% NaN vzorky
+("sumovy vystrel — ticho — sumovy vystrel").
+
+**Pricina (B_net → cos(∞) → NaN):**
+
+```
+B_net vystup drift → velke log_B
+→ B = exp(velke) → f_hzs = ∞ pro vysoke k
+→ valid maska = 0 (nad Nyquistem)
+→ ale NaN × 0 = NaN v IEEE 754
+→ cos(∞) = NaN → celý audio tensor NaN
+→ MRSTFT loss = NaN → gradient = NaN → permanentni NaN
+```
+
+**Oprava (uz aplikovana v `analysis/torch_synth.py`):**
+
+```python
+# Clamp log_B pred exp():
+B = torch.exp(model.forward_B(mf).clamp(max=0.0)).squeeze()  # B ≤ 1.0
+
+# isfinite guard ve valid masce:
+valid = ((f_hzs < sr * 0.495) & torch.isfinite(f_hzs)).float().unsqueeze(1)
+```
+
+Grand piano B je fyzikalne v [1e-5, 0.01]. Clamp na max=0.0 dovoluje B ≤ 1.0 — dostatecna
+rezerva pro trening, zaroven zamezuje f_hzs → ∞.
+
+Kdyz NaN uz nastalo, je nutne zacit znovu od checkpointu pred epochou exploze (nebo od
+zakladniho `profile.pt`). Model po NaN explozi nema zachranitelne vahy.
+
 ### UnicodeEncodeError na Windows (cp1252)
 
 Pridej na zacatek skriptu:
@@ -568,3 +730,15 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 ```
 Vsechny skripty v tomto projektu to delaji automaticky.
+
+### Nacteni starsich profile.pt (bez phi_net)
+
+`load_model()` pouziva `strict=False` → phi_net se inicializuje nahodne, ostatni vahy
+se zachovaji. Doporucene: spusti kratsim fine-tuningem (20-50 epoch) pro inicializaci phi_net:
+```bash
+python analysis/closed_loop_finetune.py \
+    --mode finetune \
+    --model analysis/profile.pt \
+    --bank  "C:/SoundBanks/IthacaPlayer/ks-grand" \
+    --epochs 50 --lr 5e-5
+```

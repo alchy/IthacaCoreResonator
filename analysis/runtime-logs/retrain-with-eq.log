@@ -1,0 +1,30 @@
+Reading analysis/params-ks-grand.json ...
+Available measured samples: 704
+Train/eval split: 632 train, 72 eval (held-out MIDI: [21, 31, 41, 51, 61]...)
+Building dataset ...
+  B=592  tau=4528  tau1_k1=630  A0=8809  df=23311  eq=10112  noise=632  biexp=4972
+  eval — B=69  A0=1266  tau1_k1=72
+Model parameters: 99,214
+Training 1800 epochs ...
+  epoch  100/1800  loss=1.133206  lr=2.98e-03  eval=1.507818
+  epoch  200/1800  loss=1.086577  lr=2.91e-03  eval=1.236204
+  epoch  300/1800  loss=1.070663  lr=2.80e-03  eval=1.213169
+  epoch  400/1800  loss=1.056040  lr=2.65e-03  eval=1.228835
+  epoch  500/1800  loss=1.043542  lr=2.47e-03  eval=1.239791
+  epoch  600/1800  loss=1.030450  lr=2.26e-03  eval=1.258982
+  epoch  700/1800  loss=1.019373  lr=2.02e-03  eval=1.270915
+  epoch  800/1800  loss=1.004406  lr=1.77e-03  eval=1.265667
+  epoch  900/1800  loss=0.989487  lr=1.51e-03  eval=1.286126
+  epoch 1000/1800  loss=0.981418  lr=1.26e-03  eval=1.282428
+  epoch 1100/1800  loss=0.976507  lr=1.01e-03  eval=1.282767
+  epoch 1200/1800  loss=0.973444  lr=7.73e-04  eval=1.285231
+  epoch 1300/1800  loss=0.971104  lr=5.60e-04  eval=1.287202
+  epoch 1400/1800  loss=0.969304  lr=3.77e-04  eval=1.288250
+  epoch 1500/1800  loss=0.968038  lr=2.29e-04  eval=1.288656
+  epoch 1600/1800  loss=0.967271  lr=1.20e-04  eval=1.288786
+  epoch 1700/1800  loss=0.966883  lr=5.26e-05  eval=1.288848
+  epoch 1800/1800  loss=0.966700  lr=3.00e-05  eval=1.288875
+Model saved -> analysis/profile.pt
+Generating full parameter profile ...
+  NN-interpolated: 0  |  Measured originals: 704
+Written -> analysis/params-nn-profile-ks-grand.json
