@@ -105,6 +105,24 @@ bool PianoCore::load(const std::string& params_path, float sr, Logger& logger) {
             pp.beat_hz = p["beat_hz"].get<float>();
             pp.phi     = p["phi"].get<float>();
         }
+
+        // Spectral EQ biquad cascade (optional — not present in NN-exported params)
+        np.n_biquad = 0;
+        if (s.contains("eq_biquads")) {
+            const auto& bqs = s["eq_biquads"];
+            int nB = std::min((int)bqs.size(), PIANO_N_BIQUAD);
+            for (int bi = 0; bi < nB; bi++) {
+                const auto& bq = bqs[bi];
+                PianoBiquadCoeffs& c = np.eq[bi];
+                c.b0 = bq["b"][0].get<float>();
+                c.b1 = bq["b"][1].get<float>();
+                c.b2 = bq["b"][2].get<float>();
+                c.a1 = bq["a"][0].get<float>();
+                c.a2 = bq["a"][1].get<float>();
+            }
+            np.n_biquad = nB;
+        }
+
         ++loaded_count;
     }
 
@@ -229,6 +247,11 @@ void PianoCore::initVoice(PianoVoice& v, int midi, int vel_idx,
     v.max_t_samp = (uint64_t)(dur_s * sample_rate_);
 
     // Initialise per-partial state
+    // Each partial gets an independent random phi_diff (phase offset string2 vs string1).
+    // This is crucial for stereo: without it, all mono partials (beat_hz=0) produce
+    // correlated L/R and the output sounds mono.  Matches physics_synth.py where each
+    // partial's two strings get independent random starting phases.
+    std::uniform_real_distribution<float> udist(0.f, TAU);
     v.n_partials = np.K;
     for (int ki = 0; ki < np.K; ki++) {
         const PianoPartialParam& pp = np.partials[ki];
@@ -243,6 +266,7 @@ void PianoCore::initVoice(PianoVoice& v, int midi, int vel_idx,
         ps.f_hz       = pp.f_hz;
         ps.beat_hz_h  = pp.beat_hz * beat_scale * 0.5f;
         ps.phi        = pp.phi;
+        ps.phi_diff   = udist(v.rng);   // independent per partial → true stereo
     }
 
     // Stereo panning: constant-power pan per string, MIDI-dependent center
@@ -256,6 +280,14 @@ void PianoCore::initVoice(PianoVoice& v, int midi, int vel_idx,
         const float a2     = center + half;
         v.gl1 = std::cos(a1);  v.gr1 = std::sin(a1);
         v.gl2 = std::cos(a2);  v.gr2 = std::sin(a2);
+    }
+
+    // Spectral EQ biquad cascade — copy coeffs, zero state
+    v.n_biquad = np.n_biquad;
+    for (int bi = 0; bi < np.n_biquad; bi++) {
+        v.eq_coeffs[bi] = np.eq[bi];
+        v.eq_wL[bi][0] = v.eq_wL[bi][1] = 0.f;
+        v.eq_wR[bi][0] = v.eq_wR[bi][1] = 0.f;
     }
 
     // Schroeder first-order all-pass decorrelation (matches physics_synth.py)
@@ -312,7 +344,7 @@ bool PianoCore::processBlock(float* out_l, float* out_r, int n_samples) noexcept
                 float phase_b = tpi2 * ps.beat_hz_h;
 
                 float s1 = std::cos(phase_c + phase_b);
-                float s2 = std::cos(phase_c - phase_b + v.phi_diff);
+                float s2 = std::cos(phase_c - phase_b + ps.phi_diff);  // per-partial
 
                 float base = ps.A0_scaled * env * 0.5f;
                 samp_L += base * (s1 * v.gl1 + s2 * v.gl2);
@@ -335,6 +367,20 @@ bool PianoCore::processBlock(float* out_l, float* out_r, int n_samples) noexcept
                 float inv = 1.f - v.decor_str;
                 samp_L = samp_L * inv + Lap * v.decor_str;
                 samp_R = samp_R * inv + Rap * v.decor_str;
+            }
+
+            // ── Spectral EQ biquad cascade (Direct Form II) ──────────────────
+            // y[n] = b0*w[n] + b1*w[n-1] + b2*w[n-2]
+            // w[n] = x[n] - a1*w[n-1] - a2*w[n-2]
+            for (int bi = 0; bi < v.n_biquad; bi++) {
+                const PianoBiquadCoeffs& c = v.eq_coeffs[bi];
+                float w0L = samp_L - c.a1 * v.eq_wL[bi][0] - c.a2 * v.eq_wL[bi][1];
+                samp_L    = c.b0 * w0L + c.b1 * v.eq_wL[bi][0] + c.b2 * v.eq_wL[bi][1];
+                v.eq_wL[bi][1] = v.eq_wL[bi][0];  v.eq_wL[bi][0] = w0L;
+
+                float w0R = samp_R - c.a1 * v.eq_wR[bi][0] - c.a2 * v.eq_wR[bi][1];
+                samp_R    = c.b0 * w0R + c.b1 * v.eq_wR[bi][0] + c.b2 * v.eq_wR[bi][1];
+                v.eq_wR[bi][1] = v.eq_wR[bi][0];  v.eq_wR[bi][0] = w0R;
             }
 
             // ── Onset / release gates ────────────────────────────────────────

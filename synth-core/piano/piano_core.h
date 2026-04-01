@@ -39,11 +39,17 @@
 
 static constexpr int   PIANO_MAX_PARTIALS = 60;
 static constexpr int   PIANO_MAX_VOICES   = 128;   // one slot per MIDI note
+static constexpr int   PIANO_N_BIQUAD     = 5;     // spectral EQ cascade sections
 static constexpr float PIANO_RELEASE_MS   = 100.f; // key-release fade-out
 static constexpr float PIANO_ONSET_MS     = 3.f;   // click-prevention onset
 static constexpr float PIANO_SKIP_THRESH  = 2e-7f; // skip silent partials
 
 // ── Loaded-param structs (constant per note) ─────────────────────────────────
+
+struct PianoBiquadCoeffs {
+    float b0 = 1.f, b1 = 0.f, b2 = 0.f;   // numerator   (a0 = 1 always)
+    float a1 = 0.f, a2 = 0.f;              // denominator (sign: +a1*w[n-1]+a2*w[n-2])
+};
 
 struct PianoPartialParam {
     float f_hz     = 0.f;
@@ -63,6 +69,9 @@ struct PianoNoteParam {
     float A_noise    = 0.04f;
     float rms_gain   = 1.f;
     float f0_hz      = 440.f;
+    // Spectral EQ biquad cascade (minimum-phase IIR, fitted from soundbank eq curve)
+    int              n_biquad = 0;
+    PianoBiquadCoeffs eq[PIANO_N_BIQUAD];
     PianoPartialParam partials[PIANO_MAX_PARTIALS];
 };
 
@@ -80,6 +89,9 @@ struct PianoPartialState {
     float f_hz        = 0.f;
     float beat_hz_h   = 0.f;  // beat_hz * beat_scale * 0.5
     float phi         = 0.f;
+    // Per-partial phase offset between string 1 and 2 (independent random per partial)
+    // Replaces the per-voice phi_diff — gives true stereo decorrelation across partials
+    float phi_diff    = 0.f;
 };
 
 struct PianoVoice {
@@ -122,6 +134,13 @@ struct PianoVoice {
     float ap_y_L    = 0.f;   // y[n-1] for L all-pass
     float ap_x_R    = 0.f;
     float ap_y_R    = 0.f;
+
+    // Spectral EQ biquad cascade state (Direct Form II, independent L/R)
+    // eq_coeffs copied from PianoNoteParam at noteOn; states cleared each noteOn
+    int             n_biquad = 0;
+    PianoBiquadCoeffs eq_coeffs[PIANO_N_BIQUAD];
+    float           eq_wL[PIANO_N_BIQUAD][2] = {};   // DF2 states for L
+    float           eq_wR[PIANO_N_BIQUAD][2] = {};   // DF2 states for R
 
     // Active partial state
     int n_partials = 0;
