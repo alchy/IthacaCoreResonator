@@ -61,4 +61,11 @@ struct SynthConfig {
     // Range: vel_band=0 → ~0.20 (ppp), vel_band=4 → ~0.76 (mf), vel_band=7 → 1.00 (fff).
     // Applied as multiplier on target_rms for both partials and noise.
     float vel_gamma           = 0.7f;
+
+    // ── Offline mode flag ─────────────────────────────────────────────────────
+    // Set to true by OfflineRenderer so noise uses absolute level (floor_rms * noise_level)
+    // without pre-scaling by target_rms * vel_gain.  Post-hoc RMS normalization then
+    // handles the output level, matching Python physics_synth.py exactly (KI-1 fix).
+    // Real-time path keeps false — uses pre-scaled noise for causal level calibration.
+    bool offline_mode         = false;
 };

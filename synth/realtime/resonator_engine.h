@@ -74,6 +74,11 @@ public:
     int  sampleRate()   const { return sample_rate_; }
     int  blockSize()    const { return block_size_; }
 
+    // ── SynthConfig live controls (safe to call from GUI/main thread) ────────
+    void setSynthBeatScale  (float v) { vm_.setSynthBeatScale(v);   }
+    void setSynthNoiseLevel (float v) { vm_.setSynthNoiseLevel(v);  }
+    void setSynthEqStrength (float v) { vm_.setSynthEqStrength(v);  }
+
     // ── DSP chain access (for GUI metering / state readback) ──────────────────
     ResonatorVoiceManager& getVoiceManager() { return vm_; }
     Logger&                getLogger()       { return logger_; }

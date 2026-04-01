@@ -30,7 +30,7 @@ bool OfflineRenderer::initialize(const std::string& params_json_path,
     try {
         vm_.initialize(params_json_path, sr, logger_);
         vm_.prepareToPlay(BLOCK_SIZE);
-        // Push our config into the voice manager (no-op initially, cfg_ is default)
+        cfg_.offline_mode = true;   // KI-1: absolute noise level, post-hoc normalization handles level
         current_sr_  = sr;
         initialized_ = true;
         return true;

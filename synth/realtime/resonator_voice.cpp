@@ -234,10 +234,12 @@ void ResonatorVoice::noteOn(int midi, int vel,
     noise_alpha_     = 1.f - std::exp(-TAU * fc_noise / sample_rate);
     noise_decay_     = std::exp(-1.f / (std::max(taun, 0.001f) * sample_rate));
     // A_noise (floor_rms) is a dimensionless ratio: noise_rms / signal_onset_rms.
-    // Multiplying by (target_rms * vel_gain) preserves the recording's noise/signal
-    // ratio at the synthesis output level.  level_scale must NOT be used here —
-    // it contains partial normalization irrelevant to noise and would cause [WAV]^2 error.
-    noise_env_       = p.noise.floor_rms * cfg.noise_level * (cfg.target_rms * vel_gain);
+    // Offline path: use absolute level (floor_rms * noise_level) so post-hoc RMS
+    // normalization scales partials+noise together — matches Python physics_synth.py.
+    // Real-time path: pre-scale by (target_rms * vel_gain) for causal level calibration.
+    noise_env_       = cfg.offline_mode
+        ? p.noise.floor_rms * cfg.noise_level
+        : p.noise.floor_rms * cfg.noise_level * (cfg.target_rms * vel_gain);
     noise_state_l_   = 0.f;
     noise_state_r_   = 0.f;
 

@@ -346,20 +346,13 @@ def run_batch(args):
                 label = f"m{midi:03d}_vel{vel}"
                 print(f"\n  MIDI {midi:3d} vel {vel}  ({label})")
 
-                # Python — aplikuj vel_gain na target_rms (shoduje se s training loop)
+                # Python syntéza — vel_gain logika centralizovaná v synthesize_python()
                 try:
-                    with open(args.params) as f:
-                        data = json.load(f)
-                    key = f"m{midi:03d}_vel{vel}"
-                    if key not in data.get("samples", {}):
-                        print(f"    [!] Přeskočeno — klíč {key} chybí v params")
-                        continue
-                    py_kwargs  = dict(config_kwargs)
-                    vel_gamma  = py_kwargs.pop("vel_gamma", 0.7)
-                    py_kwargs["target_rms"] = py_kwargs.get("target_rms", 0.06) * ((vel + 1) / 8.0) ** vel_gamma
-                    py_audio = synthesize_note(data["samples"][key],
-                                               duration=args.duration,
-                                               sr=args.sr, **py_kwargs)
+                    py_audio = synthesize_python(args.params, midi, vel,
+                                                 args.duration, args.sr, config_kwargs)
+                except ValueError as e:
+                    print(f"    [!] Přeskočeno — {e}")
+                    continue
                 except Exception as e:
                     print(f"    [!] Python chyba: {e}")
                     continue

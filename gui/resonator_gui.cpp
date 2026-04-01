@@ -753,18 +753,33 @@ int runResonatorGui(ResonatorEngine& engine, Logger& logger,
                     cv("stereo_decorr","%.3f", sc.stereo_decorr,"");
                     cv("stereo_boost", "%.3f", sc.stereo_boost, "");
 
-                    // TIMBRE col
+                    // TIMBRE col — beat_scale and eq_strength are interactive sliders
                     ImGui::TableSetColumnIndex(1);
-                    cv("beat_scale",    "%.3f", sc.beat_scale,         "");
+                    {
+                        float v = sc.beat_scale;
+                        ImGui::SetNextItemWidth(-1.f);
+                        if (ImGui::SliderFloat("##beat_scale", &v, 0.0f, 3.0f, "beat %.2f"))
+                            engine.setSynthBeatScale(v);
+                    }
                     cv("hb_brightness", "%.3f", sc.harmonic_brightness,"");
-                    cv("eq_strength",   "%.3f", sc.eq_strength,        "");
+                    {
+                        float v = sc.eq_strength;
+                        ImGui::SetNextItemWidth(-1.f);
+                        if (ImGui::SliderFloat("##eq_strength", &v, 0.0f, 1.0f, "eq %.2f"))
+                            engine.setSynthEqStrength(v);
+                    }
                     cv("eq_freq_min",   "%.0f", sc.eq_freq_min,        "Hz");
 
-                    // LEVEL/ENV col
+                    // LEVEL/ENV col — noise_level is interactive slider
                     ImGui::TableSetColumnIndex(2);
                     cv("target_rms",   "%.4f", sc.target_rms,  "");
                     cv("vel_gamma",    "%.3f", sc.vel_gamma,   "");
-                    cv("noise_level",  "%.3f", sc.noise_level, "");
+                    {
+                        float v = sc.noise_level;
+                        ImGui::SetNextItemWidth(-1.f);
+                        if (ImGui::SliderFloat("##noise_level", &v, 0.0f, 2.0f, "noise %.2f"))
+                            engine.setSynthNoiseLevel(v);
+                    }
                     cv("onset_ms",     "%.1f", sc.onset_ms,    "ms");
 
                     ImGui::EndTable();

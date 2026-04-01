@@ -103,7 +103,7 @@ class RenderClient:
                     "Build with: cmake --build build --target IthacaRenderServer"
                 )
 
-            cmd = [str(exe_path), str(params_path), "--port", str(self._port)]
+            cmd = [str(exe_path), "--params", str(params_path), "--port", str(self._port)]
             if self._log_path:
                 cmd += ["--log", str(Path(self._log_path).resolve())]
             else:
