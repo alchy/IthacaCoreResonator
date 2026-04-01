@@ -679,6 +679,18 @@ build\bin\Release\IthacaCoreResonatorGUI.exe --core PianoCore --params analysis/
 | `stereo_decorr` | Stereo | 0–2 × | 1.0 | Síla Schroederova first-order all-pass dekorélátoru |
 | `rng_seed` | Debug | 0–9999 | 0 | Seed pro šumový PRNG |
 
+**GUI — pravý panel (vizualizace poslední noty):**
+
+Při každém stisknutí klávesy GUI zobrazí detail pro danou (midi, velocity) kombinaci:
+
+| Sloupec | Obsah |
+|---|---|
+| STRUCTURE | počet parciálů, width_factor |
+| NOISE | centroid_hz, floor_rms, tau_s šumové obálky |
+| SPECTRAL EQ | frekvenční odezva biquad kaskády (min / max / mean dB) |
+
+Sloupec **SPECTRAL EQ** zobrazuje odezvu **specifickou pro konkrétní notu a velocity** — koeficienty jsou načteny z `note_params_[midi][vel]`, takže každá nota může mít jinou EQ křivku (fitovanou z LTASE měření). Odezva se vypočítá ze 5 biquad sekcí na 32 logaritmicky rozložených frekvencích (30 Hz – 18 kHz) a aktualizuje se při každém noteOn.
+
 ### Headless CLI
 
 ```bat
