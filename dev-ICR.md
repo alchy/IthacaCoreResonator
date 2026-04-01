@@ -23,20 +23,23 @@ IthacaCoreResonator/
 ├── server_main.cpp              — RenderServer entry point
 │
 ├── synth/
-│   ├── resonator_voice.cpp/h    — Per-voice physics DSP (core)
-│   ├── voice_manager.cpp/h      — 88-voice polyphony manager
-│   ├── note_lut.cpp/h           — params.json → NoteParams lookup table
-│   ├── note_params.h            — PartialParams, NoiseParams, NoteParams, NoteLUT
-│   ├── synth_config.h           — SynthConfig (global rendering parameters)
-│   ├── synth_config_io.h/cpp    — JSON I/O for SynthConfig
-│   ├── biquad_eq.h/cpp          — Per-voice spectral EQ (biquad cascade)
-│   ├── sysex.h/cpp              — SysEx parameter update protocol
+│   ├── core/                    — Shared types, no audio I/O dependency
+│   │   ├── note_params.h        — PartialParams, NoiseParams, NoteParams, NoteLUT
+│   │   ├── synth_config.h       — SynthConfig (global rendering parameters)
+│   │   ├── synth_config_io.h    — JSON I/O for SynthConfig (header-only)
+│   │   ├── biquad_eq.h/cpp      — Per-voice spectral EQ (biquad cascade)
+│   │   └── note_lut.h/cpp       — params.json → NoteParams lookup table
 │   │
-│   ├── resonator_engine.cpp/h   — Real-time engine (miniaudio + MIDI queue)
-│   ├── midi_input.h/cpp         — RtMidi wrapper
+│   ├── realtime/                — Causal real-time path (miniaudio, RtMidi)
+│   │   ├── resonator_voice.h/cpp — Per-voice physics DSP
+│   │   ├── voice_manager.h/cpp   — 88-voice polyphony manager
+│   │   ├── resonator_engine.h/cpp — miniaudio device + MIDI queue
+│   │   ├── midi_input.h/cpp      — RtMidi wrapper
+│   │   └── sysex.h/cpp           — SysEx parameter update protocol
 │   │
-│   ├── offline_renderer.cpp/h   — Headless note renderer (no audio device)
-│   └── render_server.cpp/h      — TCP JSON IPC server
+│   └── offline/                 — Headless offline path (Python-aligned)
+│       ├── offline_renderer.h/cpp — Block-based renderer + post-hoc RMS norm
+│       └── render_server.h/cpp    — TCP JSON IPC server
 │
 ├── dsp/
 │   ├── limiter/                 — Peak limiter (real-time chain only)
@@ -44,7 +47,7 @@ IthacaCoreResonator/
 │   └── dsp_chain.cpp/h          — Limiter + BBE wrappers
 │
 ├── gui/
-│   └── resonator_gui.cpp/h      — ImGui UI (voice monitor, last-note display)
+│   └── resonator_gui.cpp/h      — ImGui UI (voice monitor, SynthConfig sliders)
 │
 ├── analysis/
 │   ├── physics_synth.py         — Python ground-truth synthesizer (numpy)
@@ -58,7 +61,7 @@ IthacaCoreResonator/
 └── third_party/
     ├── miniaudio.h              — Cross-platform audio (header-only)
     ├── RtMidi.cpp/h             — MIDI I/O
-    └── nlohmann/json.hpp        — JSON parsing
+    └── json.hpp                 — nlohmann/json single-header
 ```
 
 ### Data flow
@@ -82,6 +85,10 @@ params.json ──► NoteLUT [88×8]
 
 Real-time path:  output → DSP chain (Limiter + BBE) → miniaudio → speakers
 Offline path:    output → post-hoc RMS normalization → WAV / TCP response
+
+Note: offline path sets SynthConfig.offline_mode = true, which changes noise synthesis
+to absolute level (floor_rms * noise_level) so post-hoc normalization preserves the
+noise/signal ratio. Real-time path uses pre-scaled noise for causal level calibration.
 ```
 
 ---
@@ -232,6 +239,16 @@ out[*] *= scale
 Applied after full buffer render. Corrects for inter-string phase cross-terms.
 **Not used in real-time path** (causal — uses onset-based level calibration).
 
+### Noise level — offline vs real-time
+```
+offline  (offline_mode = true):  noise_env = floor_rms · noise_level
+                                 (absolute; post-hoc normalization sets final level)
+realtime (offline_mode = false): noise_env = floor_rms · noise_level · target_rms · vel_gain
+                                 (pre-scaled for causal output level calibration)
+```
+`offline_mode` is set automatically by `OfflineRenderer::initialize()`. It must never
+be set manually in the real-time path — doing so would break the live level calibration.
+
 ---
 
 ## Differences from Original Implementation
@@ -240,10 +257,13 @@ Applied after full buffer render. Corrects for inter-string phase cross-terms.
 |---|---|---|
 | **Signal chain order** | EQ → onset → (decorr+M/S combined) | decorr → EQ → M/S → onset (matches Python) |
 | **SIMD** | `/arch:AVX2` / `-mavx2 -mfma` | `/arch:AVX` / `-mavx` (AMD Steamroller compatible) |
-| **MIDI last-note** | Only updated on keyboard press | Also updated from MIDI queue in audio thread |
+| **MIDI last-note** | Only updated on keyboard press | Updated via `noteOn()` (both MIDI hardware and GUI) |
 | **pan_spread** | Hardcoded 0.55 | From `SynthConfig.pan_spread` |
 | **beat_scale** | Always 1.0 | From `SynthConfig.beat_scale` |
 | **Offline RMS** | Per-block level calibration | Post-hoc full-buffer normalization (Python parity) |
+| **Noise formula** | Pre-scaled by `target_rms*vel_gain` in all paths | Offline: absolute `floor_rms*noise_level` (KI-1 fix); realtime: pre-scaled unchanged |
+| **synth/ structure** | Flat directory | `core/` / `realtime/` / `offline/` (Phase 2 refactor) |
+| **GUI SynthConfig** | Read-only display | `beat_scale`, `eq_strength`, `noise_level` are live sliders |
 
 ---
 

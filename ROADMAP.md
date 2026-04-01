@@ -28,30 +28,37 @@ _Last updated: 2026-04-01_
 | C8  MIDI108 vel 3 | 4.32 | 1.52 | ⚠️ noise-dominated |
 
 Mid-range piano (C2–C7 mezzo) converged to stochastic floor. Divergence only
-in noise-dominated notes — see Known Issues below.
+in noise-dominated notes — fixed in Phase 3 (KI-1).
 
 ---
 
-## Known Issues (deferred)
+## Phase 2 — Modular Refactor ✅ COMPLETE
 
-### KI-1: Noise formula mismatch for high-noise / extreme notes
-**Affected**: A0, C4 forte, C6, C8 (A_noise > 0.75 in params.json)
+### Completed
+- [x] `synth/core/` — NoteParams, SynthConfig, SynthConfigIO, BiquadEQ, NoteLUT
+- [x] `synth/realtime/` — ResonatorVoice, VoiceManager, ResonatorEngine, MidiInput, Sysex
+- [x] `synth/offline/` — OfflineRenderer, RenderServer
+- [x] `third_party/miniaudio.h` — duplicate in `synth/` removed; canonical in `third_party/`
+- [x] CMakeLists.txt — source paths and include_directories updated for all 3 targets
+- [x] External includes updated — main.cpp, gui_main.cpp, server_main.cpp, gui/
+- [x] Relative `../third_party/` includes fixed → flat names via include path
+- [x] Build verified — all 3 targets clean (IthacaCoreResonator, GUI, RenderServer)
 
-**Root cause**: C++ voice synthesizes noise at `floor_rms * target_rms * vel_gain`
-(pre-scaled). Post-hoc normalization then scales everything by
-`target_rms * vel_gain / actual_rms`. For fast-decaying notes (C8: tau=50ms,
-render=3s), actual_rms << target_rms → large scale factor → noise/signal ratio
-deviates from Python.
+---
 
-Python adds noise at absolute `A_noise` level before normalization; normalization
-scales partials+noise together, preserving the ratio.
+## Phase 3 — Quality & Tooling ✅ COMPLETE
 
-**Fix**: In offline path, use `noise_env = floor_rms * noise_level` (absolute,
-without target_rms*vel_gain) so post-hoc normalization handles level parity.
-Requires either offline-mode flag in SynthConfig or two-pass rendering.
+### Completed
+- [x] KI-1 noise formula fix — `SynthConfig.offline_mode` flag; offline path uses
+      absolute `floor_rms * noise_level`, post-hoc normalization preserves noise/signal ratio
+- [x] GUI SynthConfig live sliders — `beat_scale` (0–3), `eq_strength` (0–1), `noise_level` (0–2)
+      via `ResonatorEngine::setSynthBeatScale/EqStrength/NoiseLevel()`
+- [x] compare_cpp_python.py — `run_batch()` vel_gain logic centralized in `synthesize_python()`
+- [x] render_client.py — explicit `--params` flag on server subprocess launch
 
-**Impact on training**: Low — extreme notes (A0, C8) are rare in training data;
-mid-range forte notes contribute to loss but the C++ rendering is still usable.
+---
+
+## Known Issues
 
 ### KI-2: Stochastic phase variance
 Random initial phase per partial/string means two renders of the same note
@@ -60,31 +67,8 @@ This is expected and irreducible without fixing the random seed.
 
 ---
 
-## Phase 2 — Modular Refactor (active)
-
-### Goal
-Restructure `synth/` into clean separation of concerns:
-```
-synth/core/     — shared: NoteParams, SynthConfig, BiquadEQ, NoteLUT, constants
-synth/offline/  — OfflineRenderer, RenderServer (buffer-based, Python-aligned)
-synth/realtime/ — ResonatorVoice, VoiceManager, ResonatorEngine (causal, miniaudio)
-```
-
-### Principles
-- No code duplication between offline and realtime paths
-- Logging: unified via existing core_logger.h
-- GUI, MIDI, audio device wrappers: untouched
-- CMakeLists.txt: targets updated to reflect new paths
-- All existing functionality preserved
-
-### Next 3 Priority Actions
-1. Create `synth/core/` with NoteParams, SynthConfig, BiquadEQ, NoteLUT (headers + move .cpp)
-2. Move offline_renderer + render_server → `synth/offline/`
-3. Move resonator_voice + voice_manager + resonator_engine → `synth/realtime/`
-
----
-
 ## Technical Debt
-- compare_cpp_python.py: `synthesize_python()` and batch loop duplicate vel_gain logic — consolidate
-- `render_client.py` start() uses positional args for server launch (missing `--params` flag) — verify
-- GUI does not expose SynthConfig sliders (beat_scale, noise_level, eq_strength) — post-Phase 2
+
+- GUI does not expose remaining SynthConfig params (pan_spread, stereo_decorr, onset_ms, vel_gamma)
+- compare_cpp_python.py: no automated regression baseline — MRSTFT targets are manual
+- closed_loop_finetune.py: not verified against new offline_mode noise fix (re-run recommended)
