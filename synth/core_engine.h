@@ -82,7 +82,7 @@ public:
     DspChain*    getDspChain() noexcept { return &dsp_;        }
     Logger&      getLogger()   noexcept { return logger_;      }
 
-    int   activeVoices()     const noexcept;
+    int   activeVoices()     const;   // GUI thread only; allocates via getVizState
     float getOutputPeakLin() const noexcept { return output_peak_lin_.load(std::memory_order_relaxed); }
 
     uint8_t getLastNoteMidi() const noexcept { return last_note_midi_.load(std::memory_order_relaxed); }
@@ -92,6 +92,18 @@ public:
     int blockSize()  const { return block_size_;  }
 
 private:
+    // ── MIDI event queue (lock-free SPSC ring, instance-local) ──────────────
+    struct MidiEvt {
+        enum Type : uint8_t { NOTE_ON, NOTE_OFF, SUSTAIN, ALL_NOTES_OFF } type;
+        uint8_t midi;
+        uint8_t value;
+    };
+    static constexpr int MIDI_Q_SIZE = 256;
+    MidiEvt          midi_q_[MIDI_Q_SIZE];
+    std::atomic<int> midi_w_{0};
+    std::atomic<int> midi_r_{0};
+    void pushMidiEvt(MidiEvt::Type t, uint8_t midi, uint8_t val) noexcept;
+
     static void audioCallback(ma_device* device, void* output,
                                const void* input, uint32_t frame_count);
     void processBlock(float* out_l, float* out_r, int n_samples) noexcept;
@@ -101,15 +113,15 @@ private:
     DspChain                    dsp_;
     Logger                      logger_;
 
-    // Master mix state
-    float master_gain_ = 1.f;
-    float pan_l_       = 1.f;
-    float pan_r_       = 1.f;
+    // Master mix — atomic so GUI thread writes are safe vs RT reads
+    std::atomic<float> master_gain_{1.f};
+    std::atomic<float> pan_l_      {1.f};
+    std::atomic<float> pan_r_      {1.f};
 
-    // LFO panning
-    float lfo_speed_   = 0.f;   // Hz
-    float lfo_depth_   = 0.f;   // 0..1
-    float lfo_phase_   = 0.f;   // radians
+    // LFO panning — speed/depth written by GUI, phase only touched by RT thread
+    std::atomic<float> lfo_speed_  {0.f};   // Hz
+    std::atomic<float> lfo_depth_  {0.f};   // 0..1
+    float              lfo_phase_  = 0.f;   // RT thread only
 
     // Audio device
     ma_device*          device_      = nullptr;

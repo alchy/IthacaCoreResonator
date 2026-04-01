@@ -103,6 +103,9 @@ public:
                       Logger&            logger) = 0;
 
     // Change sample rate after load (recomputes coefficients).
+    // THREADING: must only be called before CoreEngine::start() or after
+    // CoreEngine::stop(). Implementations write non-atomic fields (e.g.
+    // inv_sr_); calling this while the RT thread runs processBlock is a data race.
     virtual void setSampleRate(float sr) = 0;
 
     // ── MIDI — called from RT thread only ─────────────────────────────────────

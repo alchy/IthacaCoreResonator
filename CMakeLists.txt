@@ -260,9 +260,9 @@ endforeach()
 # ── Custom targets ────────────────────────────────────────────────────────────
 
 add_custom_target(run
-    COMMAND IthacaCoreResonator --core SineCore
+    COMMAND $<TARGET_FILE:IthacaCoreResonator> --core SineCore
     DEPENDS IthacaCoreResonator
-    WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Release
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:IthacaCoreResonator>
 )
 
 add_custom_target(clean-exports

@@ -39,25 +39,16 @@
   #include <fcntl.h>
 #endif
 
-// ── MIDI event queue (lock-free single-producer / single-consumer) ─────────────
+// ── MIDI event queue — see pushMidiEvt (now a CoreEngine member) ─────────────
 
-struct MidiEvt {
-    enum Type : uint8_t { NOTE_ON, NOTE_OFF, SUSTAIN } type;
-    uint8_t midi;
-    uint8_t value;
-};
+// ── MIDI queue (instance-local, SPSC lock-free) ───────────────────────────────
 
-static constexpr int MIDI_Q_SIZE = 256;
-static MidiEvt          g_midi_q[MIDI_Q_SIZE];
-static std::atomic<int> g_midi_w{0};
-static std::atomic<int> g_midi_r{0};
-
-static void pushMidiEvt(MidiEvt::Type t, uint8_t midi, uint8_t val) {
-    int w    = g_midi_w.load(std::memory_order_relaxed);
+void CoreEngine::pushMidiEvt(MidiEvt::Type t, uint8_t midi, uint8_t val) noexcept {
+    int w    = midi_w_.load(std::memory_order_relaxed);
     int next = (w + 1) % MIDI_Q_SIZE;
-    if (next == g_midi_r.load(std::memory_order_acquire)) return;  // full, drop
-    g_midi_q[w] = {t, midi, val};
-    g_midi_w.store(next, std::memory_order_release);
+    if (next == midi_r_.load(std::memory_order_acquire)) return;  // full, drop
+    midi_q_[w] = {t, midi, val};
+    midi_w_.store(next, std::memory_order_release);
 }
 
 // ── Constructor / Destructor ──────────────────────────────────────────────────
@@ -128,6 +119,8 @@ bool CoreEngine::initialize(const std::string& core_name,
 
     applyConfigJson(config_json_path, core_.get(), logger_);
 
+    delete[] buf_l_;
+    delete[] buf_r_;
     buf_l_ = new float[block_size_];
     buf_r_ = new float[block_size_];
     dsp_.prepare((float)sample_rate_, block_size_);
@@ -168,18 +161,19 @@ void CoreEngine::audioCallback(ma_device*  device,
 
 void CoreEngine::processBlock(float* out_l, float* out_r, int n) noexcept {
     // Drain MIDI queue
-    int r = g_midi_r.load(std::memory_order_acquire);
-    int w = g_midi_w.load(std::memory_order_relaxed);
+    int r = midi_r_.load(std::memory_order_acquire);
+    int w = midi_w_.load(std::memory_order_relaxed);
     while (r != w) {
-        const MidiEvt& ev = g_midi_q[r];
+        const MidiEvt& ev = midi_q_[r];
         switch (ev.type) {
-            case MidiEvt::NOTE_ON:  core_->noteOn(ev.midi, ev.value);  break;
-            case MidiEvt::NOTE_OFF: core_->noteOff(ev.midi);           break;
-            case MidiEvt::SUSTAIN:  core_->sustainPedal(ev.value >= 64); break;
+            case MidiEvt::NOTE_ON:       core_->noteOn(ev.midi, ev.value);    break;
+            case MidiEvt::NOTE_OFF:      core_->noteOff(ev.midi);             break;
+            case MidiEvt::SUSTAIN:       core_->sustainPedal(ev.value >= 64); break;
+            case MidiEvt::ALL_NOTES_OFF: core_->allNotesOff();                break;
         }
         r = (r + 1) % MIDI_Q_SIZE;
     }
-    g_midi_r.store(r, std::memory_order_release);
+    midi_r_.store(r, std::memory_order_release);
 
     // Zero buffers (core output is additive)
     std::memset(out_l, 0, n * sizeof(float));
@@ -210,13 +204,20 @@ void CoreEngine::applyMasterAndLfo(float* out_l, float* out_r,
     static constexpr float PI  = 3.14159265358979f;
     static constexpr float TAU = 2.f * PI;
 
-    float mg_l = master_gain_ * pan_l_;
-    float mg_r = master_gain_ * pan_r_;
+    // Load atomics once — avoid repeated atomic reads in inner loop
+    const float mg    = master_gain_.load(std::memory_order_relaxed);
+    const float pl    = pan_l_      .load(std::memory_order_relaxed);
+    const float pr    = pan_r_      .load(std::memory_order_relaxed);
+    const float speed = lfo_speed_  .load(std::memory_order_relaxed);
+    const float depth = lfo_depth_  .load(std::memory_order_relaxed);
 
-    if (lfo_speed_ > 0.f && lfo_depth_ > 0.f) {
-        float d_phase = TAU * lfo_speed_ / (float)sample_rate_;
+    float mg_l = mg * pl;
+    float mg_r = mg * pr;
+
+    if (speed > 0.f && depth > 0.f) {
+        float d_phase = TAU * speed / (float)sample_rate_;
         for (int i = 0; i < n; i++) {
-            float lfo   = lfo_depth_ * std::sin(lfo_phase_);
+            float lfo   = depth * std::sin(lfo_phase_);
             float lm    = mg_l * (1.f - lfo);
             float rm    = mg_r * (1.f + lfo);
             out_l[i] *= lm;
@@ -281,30 +282,37 @@ void CoreEngine::noteOff(uint8_t midi) {
 void CoreEngine::sustainPedal(uint8_t val) {
     pushMidiEvt(MidiEvt::SUSTAIN, 0, val);
 }
+
 void CoreEngine::allNotesOff() {
-    if (core_) core_->allNotesOff();
+    pushMidiEvt(MidiEvt::ALL_NOTES_OFF, 0, 0);
 }
 
 // ── Master mix ────────────────────────────────────────────────────────────────
 
 void CoreEngine::setMasterGain(uint8_t v, Logger& logger) {
-    master_gain_ = (v / 127.f) * (v / 127.f) * 2.f;  // square law, 0..2
+    master_gain_.store((v / 127.f) * (v / 127.f) * 2.f,  // square law, 0..2
+                       std::memory_order_relaxed);
     logger.log("CoreEngine", LogSeverity::Info,
                "Master gain MIDI=" + std::to_string(v));
 }
 
 void CoreEngine::setMasterPan(uint8_t v) noexcept {
     float norm = (v - 64) / 64.f;  // -1..+1
-    if (norm <= 0.f) { pan_l_ = 1.f; pan_r_ = 1.f + norm; }
-    else             { pan_l_ = 1.f - norm; pan_r_ = 1.f; }
+    if (norm <= 0.f) {
+        pan_l_.store(1.f,          std::memory_order_relaxed);
+        pan_r_.store(1.f + norm,   std::memory_order_relaxed);
+    } else {
+        pan_l_.store(1.f - norm,   std::memory_order_relaxed);
+        pan_r_.store(1.f,          std::memory_order_relaxed);
+    }
 }
 
 void CoreEngine::setPanSpeed(uint8_t v) noexcept {
-    lfo_speed_ = 2.f * (v / 127.f);   // 0..2 Hz
+    lfo_speed_.store(2.f * (v / 127.f), std::memory_order_relaxed);   // 0..2 Hz
 }
 
 void CoreEngine::setPanDepth(uint8_t v) noexcept {
-    lfo_depth_ = v / 127.f;
+    lfo_depth_.store(v / 127.f, std::memory_order_relaxed);
 }
 
 // ── DSP chain ─────────────────────────────────────────────────────────────────
@@ -317,7 +325,7 @@ void CoreEngine::setBBEBassBoost    (uint8_t v) noexcept { dsp_.setBBEBassBoost(
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
-int CoreEngine::activeVoices() const noexcept {
+int CoreEngine::activeVoices() const {
     if (!core_) return 0;
     return core_->getVizState().active_voice_count;
 }

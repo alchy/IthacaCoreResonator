@@ -28,6 +28,15 @@
 #include "synth/synth_core_registry.h"
 #include "synth/midi_input.h"
 
+#if defined(__SSE__) || defined(_M_AMD64) || defined(_M_X64)
+#  include <immintrin.h>
+#  define ICR_ENABLE_FTZ() \
+     _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON); \
+     _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON)
+#else
+#  define ICR_ENABLE_FTZ() ((void)0)
+#endif
+
 // Pull in core registrations by including headers.
 // REGISTER_SYNTH_CORE() fires at static-init time in the corresponding .cpp.
 #include "synth-core/sine/sine_core.h"
@@ -79,6 +88,7 @@ static void printHelp(const char* argv0) {
 }
 
 int main(int argc, char* argv[]) {
+    ICR_ENABLE_FTZ();  // prevent denormal stalls in biquad / IIR filters
     setvbuf(stdout, nullptr, _IONBF, 0);
 
     std::string core_name   = "SineCore";
