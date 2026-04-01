@@ -65,6 +65,25 @@ Random initial phase per partial/string means two renders of the same note
 always differ. MRSTFT floor is ~1.0–1.5 even for Python vs Python comparisons.
 This is expected and irreducible without fixing the random seed.
 
+**Root cause**: each string gets a random initial phase at noteOn via `std::rand()`:
+```cpp
+phase_[s][k] = (float)std::rand() / RAND_MAX * TAU;
+```
+With multiple strings per note (2–3), the inter-string phase difference changes the
+amplitude of the sum: constructive at φ=0, destructive at φ=π. Two renders of the
+same note are physically different signals even if all parameters are identical.
+
+**Why MRSTFT is affected**: MRSTFT measures spectral distance. Phase-shifted sinusoids
+at the same frequency produce different spectra → non-zero loss even for correct code.
+Python vs Python comparison of the same note gives MRSTFT ~1.0–1.5 — this is the
+irreducible stochastic floor. Anything at or below this level is considered converged.
+
+**When it would be worth fixing**: only if the training loop needs deterministic
+gradients (e.g. same note rendered twice in one batch). Currently not a problem —
+each note is synthesized once per batch and phase variability is part of the training
+distribution. Fix would require a shared PRNG with a fixed seed passed to both C++
+and Python, or eliminating random phases entirely (loses natural tone variability).
+
 ---
 
 ## Technical Debt
