@@ -39,11 +39,17 @@
 
 static constexpr int   PIANO_MAX_PARTIALS = 60;
 static constexpr int   PIANO_MAX_VOICES   = 128;   // one slot per MIDI note
+static constexpr int   PIANO_N_BIQUAD     = 5;     // spectral EQ cascade sections
 static constexpr float PIANO_RELEASE_MS   = 100.f; // key-release fade-out
 static constexpr float PIANO_ONSET_MS     = 3.f;   // click-prevention onset
 static constexpr float PIANO_SKIP_THRESH  = 2e-7f; // skip silent partials
 
 // ── Loaded-param structs (constant per note) ─────────────────────────────────
+
+struct PianoBiquadCoeffs {
+    float b0 = 1.f, b1 = 0.f, b2 = 0.f;   // numerator   (a0 = 1 always)
+    float a1 = 0.f, a2 = 0.f;              // denominator
+};
 
 struct PianoPartialParam {
     float f_hz     = 0.f;
@@ -63,6 +69,9 @@ struct PianoNoteParam {
     float A_noise    = 0.04f;
     float rms_gain   = 1.f;
     float f0_hz      = 440.f;
+    // Spectral EQ: min-phase IIR fitted from soundbank spectral_eq curve
+    int              n_biquad = 0;
+    PianoBiquadCoeffs eq[PIANO_N_BIQUAD];
     PianoPartialParam partials[PIANO_MAX_PARTIALS];
 };
 
@@ -75,11 +84,14 @@ struct PianoPartialState {
     float decay_fast = 0.f;   // exp(-1/(tau1*sr))
     float decay_slow = 0.f;   // exp(-1/(tau2*sr))
     // Precomputed at noteOn (const during voice lifetime)
-    float A0_scaled   = 0.f;  // A0 * rms_gain * (current beat_scale)
+    float A0_scaled   = 0.f;  // A0 * rms_gain
     float a1          = 1.f;
     float f_hz        = 0.f;
     float beat_hz_h   = 0.f;  // beat_hz * beat_scale * 0.5
     float phi         = 0.f;
+    // Independent random phase offset between string 1 and 2 (per-partial)
+    // Gives true stereo: each partial decorrelated across L/R independently
+    float phi_diff    = 0.f;
 };
 
 struct PianoVoice {
@@ -115,13 +127,20 @@ struct PianoVoice {
     float gl2 = 0.707f, gr2 = 0.707f;
 
     // Schroeder all-pass decorrelation state (first-order IIR, independent per channel)
-    float decor_str = 0.f;   // blend weight [0,1]
-    float ap_g_L    = 0.f;   // all-pass coefficient for L
-    float ap_g_R    = 0.f;   // all-pass coefficient for R  (opposite sign → phase flip)
-    float ap_x_L    = 0.f;   // x[n-1] for L all-pass
-    float ap_y_L    = 0.f;   // y[n-1] for L all-pass
+    float decor_str = 0.f;
+    float ap_g_L    = 0.f;
+    float ap_g_R    = 0.f;
+    float ap_x_L    = 0.f;
+    float ap_y_L    = 0.f;
     float ap_x_R    = 0.f;
     float ap_y_R    = 0.f;
+
+    // Spectral EQ biquad cascade (Direct Form II, independent L/R state)
+    int               n_biquad    = 0;
+    float             eq_strength = 1.f;   // blend 0=bypass 1=full (snapshot at noteOn)
+    PianoBiquadCoeffs eq_coeffs[PIANO_N_BIQUAD];
+    float             eq_wL[PIANO_N_BIQUAD][2] = {};
+    float             eq_wR[PIANO_N_BIQUAD][2] = {};
 
     // Active partial state
     int n_partials = 0;
@@ -173,8 +192,10 @@ private:
     std::atomic<float> beat_scale_   {1.0f};   // scales beat_hz for all notes
     std::atomic<float> noise_level_  {1.0f};   // scales noise amplitude
     std::atomic<int>   rng_seed_     {0};       // base seed (applied at noteOn)
-    std::atomic<float> pan_spread_   {0.55f};  // stereo spread in radians (0=mono, 0.55=default)
-    std::atomic<float> stereo_decorr_{1.0f};   // Schroeder all-pass strength multiplier
+    std::atomic<float> pan_spread_      {0.55f};  // within-note string spread [rad]
+    std::atomic<float> stereo_decorr_  {1.0f};   // Schroeder all-pass strength
+    std::atomic<float> keyboard_spread_{0.60f};  // L-R spread across keyboard [rad]
+    std::atomic<float> eq_strength_    {1.0f};   // EQ blend 0=bypass 1=full
 
     // Last note info for GUI viz
     std::atomic<int>   last_midi_   {-1};
@@ -185,7 +206,8 @@ private:
     void handleNoteOff(uint8_t midi)              noexcept;
     void initVoice    (PianoVoice& v, int midi, int vel_idx,
                        float beat_scale, float noise_level, int rng_seed,
-                       float pan_spread, float stereo_decorr) noexcept;
+                       float pan_spread, float stereo_decorr,
+                       float keyboard_spread) noexcept;
 
     // Map MIDI velocity 1-127 to vel index 0-7
     static int midiVelToIdx(uint8_t velocity) {

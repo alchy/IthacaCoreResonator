@@ -15,17 +15,88 @@ import argparse, json, math, sys
 from pathlib import Path
 
 import numpy as np
+from scipy.signal import tf2sos
 
 _ROOT = str(Path(__file__).parent.parent)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 PIANO_MAX_PARTIALS = 60
+PIANO_N_BIQUAD     = 5
 SR_DEFAULT         = 44100
 DURATION_DEFAULT   = 3.0
 TARGET_RMS         = 0.06
 VEL_GAMMA          = 0.7
 RNG_SEED           = 0
+
+
+# ── Spectral EQ fitting (min-phase IIR biquad cascade) ───────────────────────
+
+def _mag_to_min_phase(H_mag):
+    """Cepstral minimum-phase reconstruction from magnitude spectrum."""
+    N_h = len(H_mag)
+    N   = (N_h - 1) * 2
+    log_H     = np.log(np.maximum(H_mag, 1e-8))
+    log_full  = np.concatenate([log_H[:-1], log_H[-1::-1][:-1]])
+    cep       = np.real(np.fft.ifft(log_full))
+    win       = np.zeros(N)
+    win[0]    = 1.0
+    win[1:N//2] = 2.0
+    if N % 2 == 0:
+        win[N//2] = 1.0
+    return np.exp(np.fft.fft(cep * win))[:N_h]
+
+
+def _invfreqz(H_complex, w, order):
+    """Least-squares IIR design (equation error, replaces removed scipy.signal.invfreqz)."""
+    nb = na = order
+    cols  = [np.exp(-1j * k * w) for k in range(nb + 1)]
+    cols += [-H_complex * np.exp(-1j * k * w) for k in range(1, na + 1)]
+    A_mat = np.column_stack(cols)
+    A_r   = np.vstack([A_mat.real, A_mat.imag])
+    rhs_r = np.concatenate([H_complex.real, H_complex.imag])
+    x, *_ = np.linalg.lstsq(A_r, rhs_r, rcond=None)
+    return x[:nb + 1], np.concatenate([[1.0], x[nb + 1:]])
+
+
+def _stabilize(a):
+    """Reflect unstable poles inside the unit circle."""
+    poles = np.roots(a)
+    mask  = np.abs(poles) >= 0.999
+    poles[mask] = 0.999 * poles[mask] / np.abs(poles[mask])
+    return np.poly(poles).real
+
+
+def eq_to_biquads(freqs_hz, gains_db, sr, n_sections=PIANO_N_BIQUAD):
+    """Fit spectral_eq curve (freqs_hz, gains_db) to a min-phase IIR biquad cascade."""
+    N_FFT  = 2048
+    f_uni  = np.linspace(0, sr / 2, N_FFT // 2 + 1)
+    gains_interp = np.interp(f_uni, freqs_hz, gains_db,
+                             left=gains_db[0], right=gains_db[-1])
+    H_mag = 10.0 ** (gains_interp / 20.0)
+    H_min = _mag_to_min_phase(H_mag)
+
+    # Fit on log-spaced frequencies (better coverage of perceptually important range)
+    f_fit = np.geomspace(30.0, min(sr * 0.47, 18000.0), 256)
+    w_fit = 2 * np.pi * f_fit / sr
+    H_fit = (np.interp(f_fit, f_uni, H_min.real)
+             + 1j * np.interp(f_fit, f_uni, H_min.imag))
+
+    b, a = _invfreqz(H_fit, w_fit, n_sections * 2)
+    a_s  = _stabilize(a)
+    try:
+        sos = tf2sos(b, a_s)
+        if len(sos) < n_sections:
+            pad = np.tile([1., 0., 0., 1., 0., 0.], (n_sections - len(sos), 1))
+            sos = np.vstack([sos, pad])
+        else:
+            sos = sos[:n_sections]
+    except Exception:
+        sos = np.tile([1., 0., 0., 1., 0., 0.], (n_sections, 1))
+
+    # SOS row: [b0, b1, b2, a0, a1, a2] — normalise by a0
+    return [{"b": [float(r[0]/r[3]), float(r[1]/r[3]), float(r[2]/r[3])],
+             "a": [float(r[4]/r[3]), float(r[5]/r[3])]} for r in sos]
 
 
 # ── Render a note (same algorithm as piano_core.cpp) ─────────────────────────
@@ -147,17 +218,35 @@ def export(soundbank_path: str, out_path: str,
                     "phi":     phi,
                 })
 
-            # ── Compute rms_gain (render with rms_gain=1 first) ──────────────
+            # ── Noise params (cap attack_tau at tau1 of k=1 partial) ─────────
+            noise          = s.get("noise", {})
+            attack_tau_raw = float(noise.get("attack_tau_s", 0.05) or 0.05)
+            A_noise        = float(noise.get("A_noise", 0.04) or 0.04)
+            tau1_k1        = partials_out[0]["tau1"] if partials_out else 3.0
+            attack_tau     = min(attack_tau_raw, tau1_k1)
+
+            # ── Compute rms_gain (partials + analytical noise power) ──────────
             vel_gain  = ((vel_idx + 1) / 8.0) ** VEL_GAMMA
             raw_audio = render_note(partials_out, phi_diff,
                                     rms_gain=1.0, sr=sr, duration=duration)
-            raw_rms   = float(np.sqrt(np.mean(raw_audio ** 2) + 1e-12))
-            rms_gain  = (target_rms * vel_gain) / raw_rms if raw_rms > 1e-10 else 1.0
+            partial_rms = float(np.sqrt(np.mean(raw_audio ** 2) + 1e-12))
+            tau_n       = max(attack_tau, 1e-4)
+            noise_rms   = A_noise * float(np.sqrt(
+                              tau_n / 2.0 * (1.0 - np.exp(-2.0 * duration / tau_n)) + 1e-12))
+            total_rms   = float(np.sqrt(partial_rms**2 + noise_rms**2 + 1e-12))
+            rms_gain    = (target_rms * vel_gain) / total_rms if total_rms > 1e-10 else 1.0
 
-            # ── Noise params ──────────────────────────────────────────────────
-            noise     = s.get("noise", {})
-            attack_tau = float(noise.get("attack_tau_s", 0.05) or 0.05)
-            A_noise    = float(noise.get("A_noise", 0.04) or 0.04)
+            # ── Spectral EQ biquads ───────────────────────────────────────────
+            eq_biquads = []
+            eq_data = s.get("spectral_eq")
+            if eq_data and eq_data.get("freqs_hz") and eq_data.get("gains_db"):
+                try:
+                    eq_biquads = eq_to_biquads(
+                        np.array(eq_data["freqs_hz"], dtype=np.float64),
+                        np.array(eq_data["gains_db"], dtype=np.float64),
+                        sr)
+                except Exception as e:
+                    eq_biquads = []
 
             out["notes"][key] = {
                 "midi":       midi,
@@ -169,6 +258,7 @@ def export(soundbank_path: str, out_path: str,
                 "A_noise":    A_noise,
                 "rms_gain":   rms_gain,
                 "partials":   partials_out,
+                "eq_biquads": eq_biquads,
             }
             n_done += 1
             if n_done % 88 == 0:
