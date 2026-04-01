@@ -25,8 +25,8 @@
  * Server sends {"status":"ready"} as the first line on each accepted connection.
  */
 
-#include "synth/render_server.h"
-#include "synth/synth_config_io.h"
+#include "synth/offline/render_server.h"
+#include "synth/core/synth_config_io.h"
 #include <filesystem>
 #include <memory>
 #include <string>

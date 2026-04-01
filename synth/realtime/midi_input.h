@@ -6,7 +6,7 @@
  * Receives note-on/off, sustain pedal, and passes them to ResonatorEngine.
  */
 
-#include "../third_party/RtMidi.h"
+#include "RtMidi.h"
 #include "resonator_engine.h"
 #include <string>
 #include <vector>

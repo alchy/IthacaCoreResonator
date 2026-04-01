@@ -1,5 +1,5 @@
 #pragma once
-#include "../synth/resonator_engine.h"
+#include "../synth/realtime/resonator_engine.h"
 #include "../sampler/core_logger.h"
 #include <string>
 

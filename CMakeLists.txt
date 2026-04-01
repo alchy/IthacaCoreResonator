@@ -31,13 +31,13 @@ find_package(OpenGL REQUIRED)
 # ── Sources ────────────────────────────────────────────────────────────────────
 
 set(SYNTH_SOURCES
-    synth/note_lut.cpp
-    synth/resonator_voice.cpp
-    synth/voice_manager.cpp
-    synth/biquad_eq.cpp
-    synth/sysex.cpp
-    synth/resonator_engine.cpp
-    synth/midi_input.cpp
+    synth/core/note_lut.cpp
+    synth/core/biquad_eq.cpp
+    synth/realtime/resonator_voice.cpp
+    synth/realtime/voice_manager.cpp
+    synth/realtime/sysex.cpp
+    synth/realtime/resonator_engine.cpp
+    synth/realtime/midi_input.cpp
     third_party/RtMidi.cpp
 )
 
@@ -62,7 +62,9 @@ add_executable(IthacaCoreResonator
 
 target_include_directories(IthacaCoreResonator PRIVATE
     ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/synth         # resonator_engine.h includes miniaudio.h
+    ${CMAKE_SOURCE_DIR}/synth/core
+    ${CMAKE_SOURCE_DIR}/synth/realtime
+    ${CMAKE_SOURCE_DIR}/synth/offline
     ${CMAKE_SOURCE_DIR}/third_party   # nlohmann/json.hpp, miniaudio.h
 )
 
@@ -147,7 +149,9 @@ add_executable(IthacaCoreResonatorGUI
 
 target_include_directories(IthacaCoreResonatorGUI PRIVATE
     ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/synth
+    ${CMAKE_SOURCE_DIR}/synth/core
+    ${CMAKE_SOURCE_DIR}/synth/realtime
+    ${CMAKE_SOURCE_DIR}/synth/offline
     ${CMAKE_SOURCE_DIR}/third_party
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
@@ -208,13 +212,13 @@ endif()
 # (RtMidi) — not needed for offline rendering.  No system audio libs required.
 
 set(RENDER_SYNTH_SOURCES
-    synth/note_lut.cpp
-    synth/resonator_voice.cpp
-    synth/voice_manager.cpp
-    synth/biquad_eq.cpp
-    synth/sysex.cpp
-    synth/offline_renderer.cpp
-    synth/render_server.cpp
+    synth/core/note_lut.cpp
+    synth/core/biquad_eq.cpp
+    synth/realtime/resonator_voice.cpp
+    synth/realtime/voice_manager.cpp
+    synth/realtime/sysex.cpp
+    synth/offline/offline_renderer.cpp
+    synth/offline/render_server.cpp
 )
 
 add_executable(IthacaRenderServer
@@ -225,7 +229,9 @@ add_executable(IthacaRenderServer
 
 target_include_directories(IthacaRenderServer PRIVATE
     ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/synth
+    ${CMAKE_SOURCE_DIR}/synth/core
+    ${CMAKE_SOURCE_DIR}/synth/realtime
+    ${CMAKE_SOURCE_DIR}/synth/offline
     ${CMAKE_SOURCE_DIR}/third_party
 )
 

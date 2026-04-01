@@ -10,7 +10,7 @@
 
 #include "render_server.h"
 
-#include "../third_party/json.hpp"
+#include "json.hpp"
 #include "sysex.h"
 
 #include <string>

@@ -19,7 +19,7 @@
  */
 
 #include "synth_config.h"
-#include "../third_party/json.hpp"
+#include "json.hpp"
 #include <fstream>
 #include <string>
 

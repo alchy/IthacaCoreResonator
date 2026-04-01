@@ -20,7 +20,7 @@
  *   soundbanks/params-<bank>-ft.synth_config.json   global SynthConfig
  */
 
-#include "synth/resonator_engine.h"
+#include "synth/realtime/resonator_engine.h"
 #include <string>
 #include <cstdlib>
 #include <cstdio>

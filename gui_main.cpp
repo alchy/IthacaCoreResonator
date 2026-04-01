@@ -11,8 +11,8 @@
  *   --config <path>   SynthConfig JSON — global parameters applied at startup
  *   --help            Show this help message
  */
-#include "synth/resonator_engine.h"
-#include "synth/synth_config_io.h"
+#include "synth/realtime/resonator_engine.h"
+#include "synth/core/synth_config_io.h"
 #include "gui/resonator_gui.h"
 #include <string>
 #include <cstdlib>

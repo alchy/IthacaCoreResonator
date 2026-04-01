@@ -10,8 +10,8 @@
  */
 
 #include "resonator_gui.h"
-#include "../synth/midi_input.h"
-#include "../synth/note_params.h"
+#include "../synth/realtime/midi_input.h"
+#include "../synth/core/note_params.h"
 #include "../dsp/dsp_chain.h"
 
 #include "imgui.h"
