@@ -107,7 +107,11 @@ void ResonatorEngine::processBlock(float* out_interleaved, uint32_t frame_count)
     while (r != w) {
         const MidiEvent& ev = midi_queue[r];
         switch (ev.type) {
-            case MidiEvent::NOTE_ON:  vm_.setNoteStateMIDI(ev.midi, true,  ev.value); break;
+            case MidiEvent::NOTE_ON:
+                vm_.setNoteStateMIDI(ev.midi, true, ev.value);
+                last_note_midi_.store(ev.midi,  std::memory_order_relaxed);
+                last_note_vel_ .store(ev.value, std::memory_order_relaxed);
+                break;
             case MidiEvent::NOTE_OFF: vm_.setNoteStateMIDI(ev.midi, false, 0);        break;
             case MidiEvent::SUSTAIN:  vm_.setSustainPedalMIDI(ev.value);              break;
         }
