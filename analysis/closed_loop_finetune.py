@@ -459,6 +459,9 @@ def finetune(
                         rng_seed=epoch,   # vary seed per epoch → different phase realizations
                     )
                     loss_i = mrstft(pred, ref_wav.to(pred.device))
+                    if not torch.isfinite(loss_i):
+                        log.log(f"  WARN step {step} m{midi:03d}v{vel}: non-finite loss ({loss_i.item():.4g}), skipping")
+                        continue
                     # Accumulate gradient (scale by 1/batch to keep magnitude consistent)
                     (loss_i / len(batch)).backward()
                     step_loss = step_loss + loss_i.detach()

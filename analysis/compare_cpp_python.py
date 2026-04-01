@@ -22,6 +22,12 @@ Použití:
 
     # Dávkový test (vybere reprezentativní noty přes celý klavír):
     python -m analysis.compare_cpp_python --batch
+
+    # Dávkový test s regresní kontrolou (exitcode 1 při regresi):
+    python -m analysis.compare_cpp_python --batch --check
+
+    # Uloží aktuální výsledky jako nový baseline (přidá margin 0.3):
+    python -m analysis.compare_cpp_python --batch --save-baseline
 """
 
 import argparse
@@ -45,10 +51,52 @@ from analysis.mrstft_loss    import mrstft_numpy
 
 
 # ── Výchozí cesty ─────────────────────────────────────────────────────────────
-DEFAULT_PARAMS  = str(_ROOT / "soundbanks" / "params-ks-grand-ft.json")
-DEFAULT_SERVER  = str(_ROOT / "build" / "bin" / "Release" / "IthacaRenderServer.exe")
-DEFAULT_CONFIG  = str(_ROOT / "analysis" / "synth_config.json")
-EXPORT_DIR      = _ROOT / "analysis" / "compare_exports"
+DEFAULT_PARAMS   = str(_ROOT / "soundbanks" / "params-ks-grand-ft.json")
+DEFAULT_SERVER   = str(_ROOT / "build" / "bin" / "Release" / "IthacaRenderServer.exe")
+DEFAULT_CONFIG   = str(_ROOT / "analysis" / "synth_config.json")
+EXPORT_DIR       = _ROOT / "analysis" / "compare_exports"
+BASELINE_PATH    = _ROOT / "analysis" / "regression_baseline.json"
+
+# ── Regresní baseline — konzervativní horní meze MRSTFT ───────────────────────
+# Odvozeno z Phase 1 verifikace (params-ks-grand-ft.json, 2026-04-01) + margin 0.3.
+# Noise-dominated noty (A0, C4 forte, C6, C8) mají vyšší práh odpovídající
+# stochastickému flooru + typické noise divergenci.
+# Po KI-1 fix (offline_mode noise) by noise noty měly mít nižší MRSTFT —
+# spusť --batch --save-baseline pro aktualizaci po potvrzení zlepšení.
+_HARDCODED_BASELINE = {
+    "m021_vel3": 3.5,   # A0  — noise dominated (pre-fix: 2.36)
+    "m036_vel3": 1.8,   # C2  — at stochastic floor (pre-fix: 1.09)
+    "m048_vel3": 1.8,   # C3  — at stochastic floor (pre-fix: 1.30)
+    "m060_vel3": 1.8,   # C4  — at stochastic floor (pre-fix: 1.27)
+    "m060_vel6": 3.5,   # C4 forte — noise dominated (pre-fix: 2.35)
+    "m072_vel3": 1.8,   # C5  — at stochastic floor (pre-fix: 1.21)
+    "m084_vel3": 2.8,   # C6  — noise dominated (pre-fix: 1.80)
+    "m096_vel3": 1.8,   # C7  — at stochastic floor (pre-fix: 1.41)
+    "m108_vel3": 5.0,   # C8  — noise dominated (pre-fix: 4.32)
+}
+
+
+def load_baseline() -> dict:
+    """Načte baseline z JSON souboru, nebo vrátí hardcoded výchozí hodnoty."""
+    if BASELINE_PATH.exists():
+        with open(BASELINE_PATH) as f:
+            data = json.load(f)
+        return data.get("targets", _HARDCODED_BASELINE)
+    return _HARDCODED_BASELINE
+
+
+def save_baseline(results: list, margin: float = 0.3) -> None:
+    """Uloží aktuální výsledky jako nový baseline (target = mrstft + margin)."""
+    targets = {r["label"]: round(r["mrstft"] + margin, 4) for r in results}
+    payload = {
+        "updated":  __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+        "margin":   margin,
+        "targets":  targets,
+    }
+    BASELINE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(BASELINE_PATH, "w") as f:
+        json.dump(payload, f, indent=2)
+    print(f"  Baseline uložen: {BASELINE_PATH}")
 
 
 # ── Reprezentativní noty pro dávkový test ─────────────────────────────────────
@@ -401,6 +449,37 @@ def run_batch(args):
                 writer.writerows(results)
             print(f"  CSV uložen: {csv_path}")
 
+        # Regresní kontrola
+        if args.check or args.save_baseline:
+            baseline = load_baseline()
+            print(f"\n{'='*60}")
+            print(f"  REGRESNÍ KONTROLA  (baseline: "
+                  f"{'soubor' if BASELINE_PATH.exists() else 'hardcoded'})")
+            failures = []
+            for r in results:
+                label  = r["label"]
+                target = baseline.get(label)
+                if target is None:
+                    print(f"  {label:16s}  MRSTFT={r['mrstft']:.4f}  [bez cíle]")
+                    continue
+                status = "PASS" if r["mrstft"] <= target else "FAIL"
+                marker = "" if status == "PASS" else f"  >> target={target:.4f}"
+                print(f"  {label:16s}  MRSTFT={r['mrstft']:.4f}  [{status}]{marker}")
+                if status == "FAIL":
+                    failures.append((label, r["mrstft"], target))
+            if failures:
+                print(f"\n  [FAIL] REGRESE na {len(failures)} notach:")
+                for lbl, got, exp in failures:
+                    print(f"    {lbl}: {got:.4f} > {exp:.4f}  (o {got-exp:+.4f})")
+            else:
+                print(f"\n  [PASS] Vsechny noty splnuji baseline.")
+
+            if args.save_baseline:
+                save_baseline(results)
+
+            if args.check and failures:
+                raise SystemExit(1)
+
 
 # ── CLI entry point ────────────────────────────────────────────────────────────
 
@@ -412,9 +491,12 @@ def main():
     p.add_argument("--sr",       type=int,   default=44100,        help="Sample rate (default: 44100)")
     p.add_argument("--params",   type=str,   default=DEFAULT_PARAMS, help="Cesta k params JSON")
     p.add_argument("--server",   type=str,   default=DEFAULT_SERVER, help="Cesta k IthacaRenderServer.exe")
-    p.add_argument("--plot",     action="store_true",               help="Zobrazit spektrogram")
-    p.add_argument("--save",     action="store_true",               help="Uložit WAV a grafy")
-    p.add_argument("--batch",    action="store_true",               help="Dávkový test všech reprezentativních not")
+    p.add_argument("--plot",          action="store_true", help="Zobrazit spektrogram")
+    p.add_argument("--save",          action="store_true", help="Uložit WAV a grafy")
+    p.add_argument("--batch",         action="store_true", help="Dávkový test všech reprezentativních not")
+    p.add_argument("--check",         action="store_true", help="Regresní kontrola vs baseline (exitcode 1 při regresi)")
+    p.add_argument("--save-baseline", action="store_true", help="Uloží aktuální výsledky jako nový baseline (+0.3 margin)",
+                   dest="save_baseline")
     args = p.parse_args()
 
     if args.batch:
