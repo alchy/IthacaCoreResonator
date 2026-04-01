@@ -125,7 +125,14 @@ def compute_metrics(cpp_audio: np.ndarray, py_audio: np.ndarray,
 def synthesize_python(params_path: str, midi: int, vel: int,
                       duration: float = 3.0, sr: int = 44100,
                       config_kwargs: dict = None) -> np.ndarray:
-    """Syntéza jedné noty přes Python physics_synth.py."""
+    """Syntéza jedné noty přes Python physics_synth.py.
+
+    Aplikuje vel_gain na target_rms — shoduje se s training loop
+    (physics_synth.py normalize_dataset, řádek ~537):
+        vel_rms = target_rms * ((vel+1)/8)^vel_gamma
+    C++ offline_renderer dělá totéž; bez tohoto by srovnání ukazovalo
+    systematický -4.2 dB offset na každé notě vel=3.
+    """
     with open(params_path) as f:
         data = json.load(f)
 
@@ -135,7 +142,13 @@ def synthesize_python(params_path: str, midi: int, vel: int,
         raise ValueError(f"Klíč {key} nenalezen v {params_path}. "
                          f"Dostupné klíče (prvních 5): {list(samples.keys())[:5]}")
 
-    kwargs = config_kwargs or {}
+    kwargs = dict(config_kwargs or {})
+    # vel_gain není parametr synthesize_note — zpracujeme ho zde
+    vel_gamma = kwargs.pop("vel_gamma", 0.7)
+    base_rms  = kwargs.get("target_rms", 0.06)
+    vel_gain  = ((vel + 1) / 8.0) ** vel_gamma
+    kwargs["target_rms"] = base_rms * vel_gain
+
     audio = synthesize_note(samples[key], duration=duration, sr=sr, **kwargs)
     return audio  # (N, 2) float32
 
@@ -171,7 +184,7 @@ def synthesize_cpp(params_path: str, server_exe: str,
         tmp_path = str(EXPORT_DIR / f"_cpp_m{midi:03d}_vel{vel}.wav")
         EXPORT_DIR.mkdir(parents=True, exist_ok=True)
         frames = rc.render(midi=midi, vel=vel, duration=duration,
-                           sr=sr, output_path=tmp_path)
+                           sr=sr, output=tmp_path)
 
     audio, file_sr = sf.read(tmp_path, dtype='float32', always_2d=True)
     if file_sr != sr:
@@ -333,7 +346,7 @@ def run_batch(args):
                 label = f"m{midi:03d}_vel{vel}"
                 print(f"\n  MIDI {midi:3d} vel {vel}  ({label})")
 
-                # Python
+                # Python — aplikuj vel_gain na target_rms (shoduje se s training loop)
                 try:
                     with open(args.params) as f:
                         data = json.load(f)
@@ -341,9 +354,12 @@ def run_batch(args):
                     if key not in data.get("samples", {}):
                         print(f"    [!] Přeskočeno — klíč {key} chybí v params")
                         continue
+                    py_kwargs  = dict(config_kwargs)
+                    vel_gamma  = py_kwargs.pop("vel_gamma", 0.7)
+                    py_kwargs["target_rms"] = py_kwargs.get("target_rms", 0.06) * ((vel + 1) / 8.0) ** vel_gamma
                     py_audio = synthesize_note(data["samples"][key],
                                                duration=args.duration,
-                                               sr=args.sr, **config_kwargs)
+                                               sr=args.sr, **py_kwargs)
                 except Exception as e:
                     print(f"    [!] Python chyba: {e}")
                     continue
@@ -353,7 +369,7 @@ def run_batch(args):
                     tmp = str(EXPORT_DIR / f"_batch_m{midi:03d}_vel{vel}.wav")
                     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
                     rc.render(midi=midi, vel=vel, duration=args.duration,
-                              sr=args.sr, output_path=tmp)
+                              sr=args.sr, output=tmp)
                     cpp_audio, _ = sf.read(tmp, dtype='float32', always_2d=True)
                 except Exception as e:
                     print(f"    [!] C++ chyba: {e}")

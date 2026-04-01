@@ -79,11 +79,13 @@ std::vector<float> OfflineRenderer::renderNote(int   midi,
     vm_.stopAllVoices();
 
     // vel is velocity band 0-7 (Python training convention).
-    // Clamp defensively, then convert to equivalent MIDI velocity so
-    // handleNoteOn maps back to the correct LUT layer and vel_band.
-    // Formula: midi_vel = band * 127 / 7 round-trips through vel_pos = midi_vel*7/127.
+    // Convert to MIDI velocity so handleNoteOn maps back to the SAME band.
+    // Naive formula  band*127/7  loses band 1-6 due to integer floor:
+    //   band=3 → midi_vel=54 → back to band=54*7/127=2  (wrong!)
+    // Fix: ceiling division  (band*127 + 6)/7  round-trips correctly for all bands:
+    //   band=3 → midi_vel=55 → back to band=55*7/127=3  ✓
     const int     vel_band  = std::clamp(vel, 0, 7);
-    const uint8_t midi_vel  = static_cast<uint8_t>(vel_band * 127 / 7);
+    const uint8_t midi_vel  = static_cast<uint8_t>((vel_band * 127 + 6) / 7);
     vm_.setNoteStateMIDI(static_cast<uint8_t>(midi), true, midi_vel);
 
     // Determine sample budget
