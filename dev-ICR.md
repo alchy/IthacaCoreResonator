@@ -86,6 +86,97 @@ Offline path:    output → post-hoc RMS normalization → WAV / TCP response
 
 ---
 
+## Stereo Architecture
+
+### Parameter sources
+
+| Parameter | Source | Description |
+|---|---|---|
+| `pan_spread` | `SynthConfig` (from `synth_config.json`, default 0.55 rad) | Spatial spread of strings across the stereo field |
+| `pan_tilt` | `SynthConfig` (default 0.20) | Keyboard tilt: bass left, treble right |
+| `n_strings` | `params.json` per-note field | Number of strings (1/2/3 depending on piano register) |
+| `width_factor` | `params.json` per-note field | M/S stereo width multiplier (not pan spread) |
+| `stereo_boost` | `SynthConfig` | Additional M/S side-channel boost |
+| `stereo_decorr` / `decorr_max` | `SynthConfig` | Schroeder all-pass depth control |
+
+`pan_spread` is **not** a per-note value from `params.json` — it comes from the global `SynthConfig`
+(loaded from `soundbanks/params-ks-grand-ft.synth_config.json` or defaults to 0.55).
+
+### String count per register
+
+Real piano string counts are extracted per-note during parameter fitting and stored in `params.json`:
+
+| Register | `n_strings` | Notes |
+|---|---|---|
+| Deep bass (~A0–F#2) | 1 | Single string, no beating |
+| Mid bass | 2 | Two strings, detuned ±beat_hz/2 |
+| Treble | 3 | Three strings, {−beat/2, 0, +beat/2} |
+
+### String spatial placement (equal-power panning)
+
+```
+center = π/4 + (midi − 64.5) / 87 · pan_tilt   ← bass left, treble right
+half   = pan_spread / 2
+
+n=1:  angles = [center]
+n=2:  angles = [center − half,  center + half]
+n=3:  angles = [center − half,  center,  center + half]
+
+pan_L[s] = cos(angle[s])
+pan_R[s] = sin(angle[s])                          ← equal-power
+
+output L += signal · pan_L[s] / n_strings
+output R += signal · pan_R[s] / n_strings
+```
+
+### String detuning (beating)
+
+```
+freq_string[s] = f_hz + beat_hz · beat_scale · STRING_SIGNS[n_strings][s]
+
+STRING_SIGNS:
+  n=1: { 0,     0,    0   }   no detuning
+  n=2: {−0.5, +0.5,   0   }   symmetric ±beat/2
+  n=3: {−0.5,  0,   +0.5  }   symmetric ±beat/2 + center
+```
+
+Note: C++ string ordering is reversed relative to Python (string0 gets −beat/2 vs Python +beat/2),
+but the stereo sum is symmetric so the perceived image is equivalent.
+
+### Post-oscillator stereo chain (per block)
+
+```
+[oscillator sum with per-string pan]
+        │
+        ▼
+1. Schroeder all-pass decorrelation  (L and R independently, different g coefficients)
+     g_L =  0.35 + ds·0.25
+     g_R = −(0.35 + ds·0.20)
+     y[n] = −g·x[n] + x[n−1] − g·y[n−1]
+     out  = x·(1−ds) + y·ds
+     ds   = clamp((midi − decorr_lo)/(decorr_hi − decorr_lo), 0, 1) · decorr_max · stereo_decorr
+        │
+        ▼
+2. Spectral BiquadEQ  (per-note curve from params.json, eq_strength blend)
+        │
+        ▼
+3. M/S stereo width
+     eff  = width_factor · stereo_boost
+     outL = L·(1+eff)/2 + R·(1−eff)/2
+     outR = R·(1+eff)/2 + L·(1−eff)/2
+        │
+        ▼
+4. Onset ramp (linear, onset_ms, applied LAST — matches Python)
+        │
+        ▼
+5. Accumulate into output buffers
+```
+
+Noise channels (L and R) are independent (separate `std::rand()` draws per sample),
+matching Python which generates L and R noise buffers separately.
+
+---
+
 ## Calculation Methods
 
 ### Inharmonic partial frequencies
