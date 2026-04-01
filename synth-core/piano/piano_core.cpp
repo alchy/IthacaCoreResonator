@@ -516,6 +516,34 @@ CoreVizState PianoCore::getVizState() const {
             vv.partials.push_back(cpv);
         }
 
+        // Spectral EQ frequency response (evaluated from biquad coefficients)
+        // 32 log-spaced frequencies 30 Hz – 18 kHz, cascade magnitude in dB
+        if (np.n_biquad > 0) {
+            constexpr int N_EQ = 32;
+            const float f_lo = 30.f, f_hi = 18000.f;
+            const float log_lo = std::log(f_lo), log_hi = std::log(f_hi);
+            vv.eq_freqs_hz.resize(N_EQ);
+            vv.eq_gains_db.resize(N_EQ);
+            for (int fi = 0; fi < N_EQ; fi++) {
+                float f   = std::exp(log_lo + (log_hi - log_lo) * fi / (N_EQ - 1));
+                float w   = TAU * f * inv_sr_;
+                float cw  = std::cos(w), sw = std::sin(w);
+                float c2w = std::cos(2.f * w), s2w = std::sin(2.f * w);
+                // Product of biquad section magnitudes²
+                float mag2 = 1.f;
+                for (int bi = 0; bi < np.n_biquad; bi++) {
+                    const PianoBiquadCoeffs& c = np.eq[bi];
+                    float nr = c.b0 + c.b1 * cw  + c.b2 * c2w;
+                    float ni = -(c.b1 * sw + c.b2 * s2w);
+                    float dr = 1.f  + c.a1 * cw  + c.a2 * c2w;
+                    float di = -(c.a1 * sw + c.a2 * s2w);
+                    mag2 *= (nr*nr + ni*ni) / std::max(dr*dr + di*di, 1e-30f);
+                }
+                vv.eq_freqs_hz[fi] = f;
+                vv.eq_gains_db[fi] = 10.f * std::log10(std::max(mag2, 1e-12f));
+            }
+        }
+
         vs.last_note       = std::move(vv);
         vs.last_note_valid = true;
     }
