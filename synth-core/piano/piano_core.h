@@ -137,7 +137,8 @@ struct PianoVoice {
 
     // Spectral EQ biquad cascade state (Direct Form II, independent L/R)
     // eq_coeffs copied from PianoNoteParam at noteOn; states cleared each noteOn
-    int             n_biquad = 0;
+    int             n_biquad   = 0;
+    float           eq_strength= 1.f;   // blend 0=bypass 1=full (copied from atomic at noteOn)
     PianoBiquadCoeffs eq_coeffs[PIANO_N_BIQUAD];
     float           eq_wL[PIANO_N_BIQUAD][2] = {};   // DF2 states for L
     float           eq_wR[PIANO_N_BIQUAD][2] = {};   // DF2 states for R
@@ -192,8 +193,10 @@ private:
     std::atomic<float> beat_scale_   {1.0f};   // scales beat_hz for all notes
     std::atomic<float> noise_level_  {1.0f};   // scales noise amplitude
     std::atomic<int>   rng_seed_     {0};       // base seed (applied at noteOn)
-    std::atomic<float> pan_spread_   {0.55f};  // stereo spread in radians (0=mono, 0.55=default)
-    std::atomic<float> stereo_decorr_{1.0f};   // Schroeder all-pass strength multiplier
+    std::atomic<float> pan_spread_      {0.55f};  // within-note string spread [rad]
+    std::atomic<float> stereo_decorr_  {1.0f};   // Schroeder all-pass strength multiplier
+    std::atomic<float> keyboard_spread_{0.60f};  // total L-R spread across keyboard [rad]
+    std::atomic<float> eq_strength_    {1.0f};   // biquad EQ blend (0=bypass, 1=full)
 
     // Last note info for GUI viz
     std::atomic<int>   last_midi_   {-1};
@@ -204,7 +207,8 @@ private:
     void handleNoteOff(uint8_t midi)              noexcept;
     void initVoice    (PianoVoice& v, int midi, int vel_idx,
                        float beat_scale, float noise_level, int rng_seed,
-                       float pan_spread, float stereo_decorr) noexcept;
+                       float pan_spread, float stereo_decorr,
+                       float keyboard_spread) noexcept;
 
     // Map MIDI velocity 1-127 to vel index 0-7
     static int midiVelToIdx(uint8_t velocity) {

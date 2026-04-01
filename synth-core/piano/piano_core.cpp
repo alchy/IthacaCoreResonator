@@ -197,7 +197,8 @@ void PianoCore::handleNoteOn(uint8_t midi, uint8_t vel) noexcept {
               noise_level_.load(std::memory_order_relaxed),
               rng_seed_.load(std::memory_order_relaxed),
               pan_spread_.load(std::memory_order_relaxed),
-              stereo_decorr_.load(std::memory_order_relaxed));
+              stereo_decorr_.load(std::memory_order_relaxed),
+              keyboard_spread_.load(std::memory_order_relaxed));
 
     last_midi_.store(midi, std::memory_order_relaxed);
     last_vel_ .store(vel,  std::memory_order_relaxed);
@@ -214,7 +215,8 @@ void PianoCore::handleNoteOff(uint8_t midi) noexcept {
 void PianoCore::initVoice(PianoVoice& v, int midi, int vel_idx,
                            float beat_scale, float noise_level,
                            int rng_seed, float pan_spread,
-                           float stereo_decorr) noexcept {
+                           float stereo_decorr,
+                           float keyboard_spread) noexcept {
     const PianoNoteParam& np = note_params_[midi][vel_idx];
 
     v.active     = true;
@@ -270,11 +272,12 @@ void PianoCore::initVoice(PianoVoice& v, int midi, int vel_idx,
     }
 
     // Stereo panning: constant-power pan per string, MIDI-dependent center
-    // Matches physics_synth.py:  center = pi/4 + (midi-64.5)/87 * 0.20
-    // String 1 (s1 = carrier+beat/2) → angle1 = center - half
-    // String 2 (s2 = carrier-beat/2) → angle2 = center + half
+    // center = pi/4 + (midi-64.5)/87 * keyboard_spread/2
+    //   keyboard_spread=0 → all notes centered; larger → bass left, treble right
+    // String 1 (s1 = carrier+beat/2) → angle1 = center - pan_spread/2
+    // String 2 (s2 = carrier-beat/2) → angle2 = center + pan_spread/2
     {
-        const float center = (PI / 4.f) + ((float)midi - 64.5f) / 87.0f * 0.20f;
+        const float center = (PI / 4.f) + ((float)midi - 64.5f) / 87.0f * (keyboard_spread * 0.5f);
         const float half   = pan_spread * 0.5f;
         const float a1     = center - half;
         const float a2     = center + half;
@@ -282,8 +285,9 @@ void PianoCore::initVoice(PianoVoice& v, int midi, int vel_idx,
         v.gl2 = std::cos(a2);  v.gr2 = std::sin(a2);
     }
 
-    // Spectral EQ biquad cascade — copy coeffs, zero state
-    v.n_biquad = np.n_biquad;
+    // Spectral EQ biquad cascade — copy coeffs, zero state, snapshot eq_strength
+    v.n_biquad    = np.n_biquad;
+    v.eq_strength = eq_strength_.load(std::memory_order_relaxed);
     for (int bi = 0; bi < np.n_biquad; bi++) {
         v.eq_coeffs[bi] = np.eq[bi];
         v.eq_wL[bi][0] = v.eq_wL[bi][1] = 0.f;
@@ -370,17 +374,22 @@ bool PianoCore::processBlock(float* out_l, float* out_r, int n_samples) noexcept
             }
 
             // ── Spectral EQ biquad cascade (Direct Form II) ──────────────────
-            // y[n] = b0*w[n] + b1*w[n-1] + b2*w[n-2]
-            // w[n] = x[n] - a1*w[n-1] - a2*w[n-2]
-            for (int bi = 0; bi < v.n_biquad; bi++) {
-                const PianoBiquadCoeffs& c = v.eq_coeffs[bi];
-                float w0L = samp_L - c.a1 * v.eq_wL[bi][0] - c.a2 * v.eq_wL[bi][1];
-                samp_L    = c.b0 * w0L + c.b1 * v.eq_wL[bi][0] + c.b2 * v.eq_wL[bi][1];
-                v.eq_wL[bi][1] = v.eq_wL[bi][0];  v.eq_wL[bi][0] = w0L;
+            // Blended: out = dry*(1-eq_strength) + wet*eq_strength
+            if (v.n_biquad > 0 && v.eq_strength > 0.001f) {
+                float wetL = samp_L, wetR = samp_R;
+                for (int bi = 0; bi < v.n_biquad; bi++) {
+                    const PianoBiquadCoeffs& c = v.eq_coeffs[bi];
+                    float w0L = wetL - c.a1 * v.eq_wL[bi][0] - c.a2 * v.eq_wL[bi][1];
+                    wetL      = c.b0 * w0L + c.b1 * v.eq_wL[bi][0] + c.b2 * v.eq_wL[bi][1];
+                    v.eq_wL[bi][1] = v.eq_wL[bi][0];  v.eq_wL[bi][0] = w0L;
 
-                float w0R = samp_R - c.a1 * v.eq_wR[bi][0] - c.a2 * v.eq_wR[bi][1];
-                samp_R    = c.b0 * w0R + c.b1 * v.eq_wR[bi][0] + c.b2 * v.eq_wR[bi][1];
-                v.eq_wR[bi][1] = v.eq_wR[bi][0];  v.eq_wR[bi][0] = w0R;
+                    float w0R = wetR - c.a1 * v.eq_wR[bi][0] - c.a2 * v.eq_wR[bi][1];
+                    wetR      = c.b0 * w0R + c.b1 * v.eq_wR[bi][0] + c.b2 * v.eq_wR[bi][1];
+                    v.eq_wR[bi][1] = v.eq_wR[bi][0];  v.eq_wR[bi][0] = w0R;
+                }
+                const float dry = 1.f - v.eq_strength;
+                samp_L = samp_L * dry + wetL * v.eq_strength;
+                samp_R = samp_R * dry + wetR * v.eq_strength;
             }
 
             // ── Onset / release gates ────────────────────────────────────────
@@ -441,25 +450,39 @@ bool PianoCore::setParam(const std::string& key, float value) {
                              std::memory_order_relaxed);
         return true;
     }
+    if (key == "keyboard_spread") {
+        keyboard_spread_.store(std::max(0.f, std::min(3.14159f, value)),
+                               std::memory_order_relaxed);
+        return true;
+    }
+    if (key == "eq_strength") {
+        eq_strength_.store(std::max(0.f, std::min(1.f, value)),
+                           std::memory_order_relaxed);
+        return true;
+    }
     return false;
 }
 
 bool PianoCore::getParam(const std::string& key, float& out) const {
-    if (key == "beat_scale")   { out = beat_scale_   .load(std::memory_order_relaxed); return true; }
-    if (key == "noise_level")  { out = noise_level_  .load(std::memory_order_relaxed); return true; }
-    if (key == "rng_seed")     { out = (float)rng_seed_.load(std::memory_order_relaxed); return true; }
-    if (key == "pan_spread")   { out = pan_spread_   .load(std::memory_order_relaxed); return true; }
-    if (key == "stereo_decorr"){ out = stereo_decorr_.load(std::memory_order_relaxed); return true; }
+    if (key == "beat_scale")      { out = beat_scale_      .load(std::memory_order_relaxed); return true; }
+    if (key == "noise_level")     { out = noise_level_     .load(std::memory_order_relaxed); return true; }
+    if (key == "rng_seed")        { out = (float)rng_seed_ .load(std::memory_order_relaxed); return true; }
+    if (key == "pan_spread")      { out = pan_spread_      .load(std::memory_order_relaxed); return true; }
+    if (key == "stereo_decorr")   { out = stereo_decorr_   .load(std::memory_order_relaxed); return true; }
+    if (key == "keyboard_spread") { out = keyboard_spread_ .load(std::memory_order_relaxed); return true; }
+    if (key == "eq_strength")     { out = eq_strength_     .load(std::memory_order_relaxed); return true; }
     return false;
 }
 
 std::vector<CoreParamDesc> PianoCore::describeParams() const {
     return {
-        { "beat_scale",   "Beat Scale",    "Timbre",  "×",   beat_scale_   .load(), 0.f,    4.f,     false },
-        { "noise_level",  "Noise Level",   "Timbre",  "×",   noise_level_  .load(), 0.f,    4.f,     false },
-        { "pan_spread",   "Pan Spread",    "Stereo",  "rad", pan_spread_   .load(), 0.f,    3.14159f,false },
-        { "stereo_decorr","Stereo Decorr", "Stereo",  "×",   stereo_decorr_.load(), 0.f,    2.f,     false },
-        { "rng_seed",     "RNG Seed",      "Debug",   "",    (float)rng_seed_.load(), 0.f,  9999.f,  true  },
+        { "beat_scale",      "Beat Scale",      "Timbre", "×",   beat_scale_     .load(), 0.f, 4.f,      false },
+        { "noise_level",     "Noise Level",     "Timbre", "×",   noise_level_    .load(), 0.f, 4.f,      false },
+        { "eq_strength",     "EQ Strength",     "Timbre", "",    eq_strength_    .load(), 0.f, 1.f,      false },
+        { "keyboard_spread", "Keyboard Spread", "Stereo", "rad", keyboard_spread_.load(), 0.f, 3.14159f, false },
+        { "pan_spread",      "Pan Spread",      "Stereo", "rad", pan_spread_     .load(), 0.f, 3.14159f, false },
+        { "stereo_decorr",   "Stereo Decorr",   "Stereo", "×",   stereo_decorr_  .load(), 0.f, 2.f,      false },
+        { "rng_seed",        "RNG Seed",        "Debug",  "",    (float)rng_seed_.load(), 0.f, 9999.f,   true  },
     };
 }
 
