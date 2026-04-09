@@ -164,6 +164,10 @@ python -m analysis.closed_loop_finetune \
 
 ## Aktuální stav projektu
 
+Podrobná historie vývoje, rozhodnutí a výsledky jednotlivých fází: [PROGRESS.md](PROGRESS.md)
+
+
+
 - Signal chain C++ ↔ Python parita ověřena (Phase 1 ✅)
 - Modulární refaktor kódu dokončen (Phase 2 ✅)
 - KI-1 noise formula fix, GUI live slidery, regresní baseline (Phase 3 ✅)
