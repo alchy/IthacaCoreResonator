@@ -118,47 +118,213 @@ Hodnoty v projektu:
 
 ---
 
-## Jak spustit
+## Zprovoznění
 
-### Real-time přehrávání (GUI)
+### Požadavky
+
+- CMake ≥ 3.16
+- MSVC BuildTools 2022 (Windows) nebo GCC/Clang (Linux/macOS)
+- Python 3.10+ s PyTorch, numpy, scipy, soundfile
+- Internet při prvním buildu (FetchContent stáhne GLFW + Dear ImGui)
+
+### Build (Windows)
+
+Spustit z VS Developer PowerShell nebo po `vcvars64.bat`:
+
+```bat
+cd C:\cesta\k\ICR
+
+cmake -B build -S . -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release --target IthacaCoreResonator
+cmake --build build --config Release --target IthacaCoreResonatorGUI
+cmake --build build --config Release --target IthacaRenderServer
+```
+
+Binárky skončí v `build\bin\Release\`. Soundbanky se automaticky zkopírují do `build\bin\Release\soundbanks\`.
+
+### Build (Linux / macOS)
+
+```bash
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
+```
+
+Na Linuxu je potřeba `libasound-dev` (ALSA).
+
+---
+
+## Spuštění syntetizéru
+
+### GUI — doporučeno pro hraní
 
 ```bat
 cd build\bin\Release
 IthacaCoreResonatorGUI.exe --params soundbanks\params-ks-grand-ft.json
 ```
 
+Přepínače:
+
+| Přepínač | Popis |
+|---|---|
+| `--params <cesta>` | Soundbanka (JSON), **povinné** |
+| `--config <cesta>` | Volitelný SynthConfig JSON (beat_scale, eq_strength, …) |
+| `--port <N>` | Index MIDI vstupního portu (default: 0; na startu vypíše dostupné porty) |
+
 Keyboard fallback (bez MIDI klávesnice):
 ```
 a s d f g h j k  →  C4 D4 E4 F4 G4 A4 B4 C5
-z                →  sustain pedal
+z                →  sustain pedal (toggle)
 q                →  quit
 ```
 
-### Build
+### CLI — headless real-time
 
 ```bat
-cmake -B build -S . -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release
+IthacaCoreResonator.exe --params soundbanks\params-ks-grand-ft.json
 ```
 
-### Trénink od nuly
+Stejné přepínače a keyboard fallback jako GUI.
+
+### RenderServer — pro Python pipeline
+
+```bat
+IthacaRenderServer.exe --params soundbanks\params-ks-grand-ft.json --port 9876
+```
+
+Server po startu pošle `{"status":"ready"}` na každé přijaté TCP spojení.
+Logy jdou do `analysis/runtime-logs/render-server.log`.
+
+TCP protokol (jeden JSON per řádek, `\n`-terminated):
+
+```json
+{"cmd":"ping"}
+{"cmd":"render","midi":60,"vel":3,"sr":44100,"duration":3.0,"output":"exports/note.wav"}
+{"cmd":"set_config","params":{"beat_scale":1.5,"eq_strength":0.8,"noise_level":1.0}}
+{"cmd":"get_config"}
+{"cmd":"reload","params":"soundbanks/jiny-profil.json"}
+{"cmd":"quit"}
+```
+
+---
+
+## Generování soundbanky
+
+Celý pipeline ve třech krocích:
+
+### Krok 1 — Supervisory trénink NN
 
 ```bash
-# 1. Supervisory training
 python -m analysis.train_instrument_profile \
-  --in analysis/params-ks-grand.json \
-  --out analysis/params-nn-profile-ks-grand-v2.json \
-  --model analysis/profile-v2.pt \
-  --epochs 800
+  --in  analysis/params-ks-grand.json \       # extrahované parametry z nahrávek
+  --out analysis/params-nn-profile-ks-grand-v2.json \  # výstupní banka
+  --model analysis/profile-v2.pt \            # uložený model
+  --epochs 800 \
+  --hidden 64 \
+  --lr 3e-3 \
+  --eval-every 10
+```
 
-# 2. MRSTFT fine-tuning
+| Přepínač | Popis |
+|---|---|
+| `--in` | Vstupní JSON s extrahovanými parametry (ground truth z nahrávek) |
+| `--out` | Výstupní params JSON (88 not × 8 vel vrstev) |
+| `--model` | Cesta pro uložení/načtení `.pt` modelu |
+| `--epochs` | Počet epoch (doporučeno 800) |
+| `--hidden` | Velikost skrytých vrstev sítě (default: 64) |
+| `--lr` | Learning rate (default: 3e-3) |
+| `--midi-from/--midi-to` | Omezení rozsahu not (default: celý klavír) |
+| `--eval-every N` | Eval každých N not (default: 10) |
+
+### Krok 2 — MRSTFT fine-tuning
+
+```bash
 python -m analysis.closed_loop_finetune \
   --mode finetune \
   --model analysis/profile-v2.pt \
-  --bank /cesta/k/nahravkam \
-  --out analysis/profile-v2-finetuned.pt \
-  --epochs 300
+  --bank  C:/SoundBanks/ddsp/ks-grand \       # adresář s originálními WAV
+  --out   analysis/profile-v2-finetuned.pt \
+  --epochs 300 \
+  --lr 1e-4 \
+  --batch-size 8 \
+  --seed 7 \
+  --log analysis/runtime-logs/finetune-v2.log
 ```
+
+| Přepínač | Popis |
+|---|---|
+| `--mode` | `finetune` (MRSTFT loss), `eval` (jen vyhodnocení), `global` (globální params) |
+| `--model` | Vstupní `.pt` model |
+| `--bank` | Adresář s WAV soubory ve formátu `m060-vel3-f44.wav` |
+| `--out` | Výstupní finetuned `.pt` model |
+| `--epochs` | Počet epoch (doporučeno 300) |
+| `--lr` | Learning rate (doporučeno 1e-4) |
+| `--batch-size` | Not per gradient step (default: 8) |
+| `--seed` | Random seed pro reprodukovatelnost |
+| `--noise-level` | Úroveň šumu v syntéze (default: 1.0) |
+| `--beat-scale` | Škálování beatingu (default: 1.0) |
+| `--render-dir` | Ukládat WAV checkpointy každých N epoch |
+| `--log` | Cesta k logu |
+
+### Krok 3 — Nasazení banky
+
+```bat
+copy analysis\params-nn-profile-ks-grand-v2.json soundbanks\params-ks-grand-v2-nn.json
+copy soundbanks\params-ks-grand-v2-nn.json build\bin\Release\soundbanks\
+```
+
+---
+
+## Ověření C++ vs Python parity
+
+```bash
+# Spustit nejdřív RenderServer (v jiném terminálu):
+cd build\bin\Release && IthacaRenderServer.exe --params soundbanks\params-ks-grand-ft.json
+
+# Rychlý test — C4 vel 3:
+python -m analysis.compare_cpp_python
+
+# Celý klavír:
+python -m analysis.compare_cpp_python --batch --save
+
+# Jedna nota se spektrogramem:
+python -m analysis.compare_cpp_python --midi 60 --vel 3 --plot --save
+
+# Regresní kontrola (CI použití):
+python -m analysis.compare_cpp_python --batch --check
+
+# Uložit aktuální výsledky jako nový baseline:
+python -m analysis.compare_cpp_python --batch --save-baseline
+```
+
+| Přepínač | Popis |
+|---|---|
+| `--midi N` | MIDI číslo noty (default: 60 = C4) |
+| `--vel N` | Velocity band 0–7 (default: 3) |
+| `--duration S` | Délka renderované noty v sekundách |
+| `--params <cesta>` | Params JSON pro RenderServer |
+| `--batch` | Test celého reprezentativního rozsahu not |
+| `--plot` | Zobrazit spektrogram |
+| `--save` | Uložit WAV a grafy |
+| `--check` | Porovnat s baseline, exit 1 při regresi |
+| `--save-baseline` | Uložit aktuální výsledky jako nový baseline (+0.3 margin) |
+
+---
+
+## SynthConfig parametry
+
+Globální parametry syntézy lze předat přes `--config synth_config.json` nebo měnit live v GUI:
+
+| Parametr | Default | Popis |
+|---|---|---|
+| `beat_scale` | 1.0 | Škálování beatingu mezi strunami (0 = žádný beating, 3 = výrazný) |
+| `eq_strength` | 1.0 | Intenzita spektrální EQ korekce (0 = vypnuto, 1 = plná korekce) |
+| `noise_level` | 1.0 | Úroveň šumové složky (0 = bez šumu, 2 = zdvojnásobeno) |
+| `pan_spread` | 0.55 | Prostorové rozložení strun ve stereo poli (radiány) |
+| `pan_tilt` | 0.20 | Náklon stereo obrazu (bas vlevo, výšky vpravo) |
+| `stereo_decorr` | 1.0 | Intenzita Schroederovy dekorelace L/R kanálů |
+| `onset_ms` | 10.0 | Délka onset rampy v ms |
+| `vel_gamma` | 1.0 | Gamma křivka velocity → hlasitost |
+| `target_rms` | 0.06 | Cílová RMS úroveň výstupu (~−24 dBFS) |
 
 ---
 
